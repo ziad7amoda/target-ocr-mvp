@@ -97,3 +97,18 @@ def test_consistent_dates_pass():
 def test_cross_checks_skip_unparseable_values():
     """Format rules already flagged these; cross-checks must not crash on them."""
     assert check_cross_fields({"date_of_birth": "not-a-date", "expiry_date": "2030-04-11"}) == {}
+
+
+def test_basic_format_date_without_separators_is_rejected():
+    """date.fromisoformat accepts "19900412" on Python 3.11+, but the contract
+    is YYYY-MM-DD and a separator-less date reaching a reviewer as `ok` is
+    exactly the silent-wrong-value this module exists to prevent."""
+    assert check_format("date_of_birth", "19900412") is not None
+
+
+def test_iso_week_date_is_rejected():
+    assert check_format("expiry_date", "2024-W01-1") is not None
+
+
+def test_valid_name_passes():
+    assert check_format("full_name", "JOHN A SMITH") is None

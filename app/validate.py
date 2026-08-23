@@ -21,6 +21,10 @@ _ID_NUMBER = re.compile(r"^\d{8}$")
 _HAS_DIGIT = re.compile(r"\d")
 # Arabic (0600-06FF), Arabic Supplement, and Arabic Presentation Forms.
 _ARABIC_SCRIPT = re.compile(r"[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]")
+# date.fromisoformat is more permissive than its name suggests on Python 3.11+:
+# it also accepts basic format ("19900412") and ISO week dates ("2024-W01-1").
+# The contract here is specifically YYYY-MM-DD, so anchor before delegating.
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 _DATE_FIELDS = ("date_of_birth", "expiry_date")
 _MIN_YEAR, _MAX_YEAR = 1900, 2100
@@ -33,6 +37,8 @@ def _nationalities() -> set[str]:
 
 
 def _parse_iso(value: str) -> date | None:
+    if not _ISO_DATE.match(value):
+        return None
     try:
         return date.fromisoformat(value)
     except ValueError:
