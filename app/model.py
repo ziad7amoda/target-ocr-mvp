@@ -60,3 +60,138 @@ class FakeEngine:
         )
         out, self.responses = self.responses[: len(requests)], self.responses[len(requests):]
         return out
+
+
+class QwenEngine:
+    """Real inference. The only class in the project that needs a GPU.
+
+    T4 notes, recorded so they are not rediscovered: compute capability 7.5
+    means no bf16 (fp16 is correct here) and no FlashAttention-2, which needs
+    8.0+. SDPA is the ceiling. A 3B model in fp16 is ~6GB of the 16GB card,
+    so no quantisation, which also avoids its quality cost.
+    """
+
+    def __init__(self, settings) -> None:
+        self._settings = settings
+        self._model = None
+        self._processor = None
+        self._warmup_ms: int | None = None
+
+    @property
+    def model_id(self) -> str:
+        return self._settings.MODEL_ID
+
+    @property
+    def device(self) -> str:
+        import torch
+
+        if self._settings.DEVICE != "auto":
+            return self._settings.DEVICE
+        return "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    @property
+    def loaded(self) -> bool:
+        return self._model is not None and self._warmup_ms is not None
+
+    @property
+    def warmup_ms(self) -> int | None:
+        return self._warmup_ms
+
+    def load(self) -> None:
+        import torch
+        from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+
+        dtype = getattr(torch, self._settings.TORCH_DTYPE)
+        self._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            self._settings.MODEL_ID,
+            torch_dtype=dtype,
+            attn_implementation="sdpa",
+            device_map=self.device,
+        )
+        self._model.eval()
+        self._processor = AutoProcessor.from_pretrained(
+            self._settings.MODEL_ID,
+            min_pixels=self._settings.MIN_PIXELS,
+            max_pixels=self._settings.MAX_PIXELS,
+        )
+
+    def warmup(self) -> int:
+        """Absorb CUDA kernel autotuning and allocator warm-up.
+
+        Without this the first real request pays 20-40s, which during a demo
+        looks like a hang. /api/health stays loaded=false until this returns.
+        """
+        import time
+
+        img = Image.new("RGB", (448, 448), "white")
+        t0 = time.perf_counter()
+        self._generate_raw([GenerationRequest(image=img, prompt="Reply with OK.")], max_new_tokens=8)
+        self._warmup_ms = int((time.perf_counter() - t0) * 1000)
+        return self._warmup_ms
+
+    def vram_mb(self) -> int | None:
+        import torch
+
+        if not torch.cuda.is_available():
+            return None
+        return int(torch.cuda.max_memory_allocated() / 1024 / 1024)
+
+    def generate(self, requests: list[GenerationRequest]) -> list[str]:
+        return self._generate_raw(requests, self._settings.MAX_NEW_TOKENS)
+
+    def _generate_raw(self, requests: list[GenerationRequest], max_new_tokens: int) -> list[str]:
+        import torch
+
+        messages = [
+            [{"role": "user", "content": [
+                {"type": "image", "image": r.image},
+                {"type": "text", "text": r.prompt},
+            ]}]
+            for r in requests
+        ]
+        texts = [
+            self._processor.apply_chat_template(m, tokenize=False, add_generation_prompt=True)
+            for m in messages
+        ]
+        # Left padding is required for batched decoder-only generation: with
+        # right padding, shorter sequences generate from pad tokens and emit
+        # garbage. This is the single easiest way to break the batching in D5.
+        self._processor.tokenizer.padding_side = "left"
+        inputs = self._processor(
+            text=texts,
+            images=[r.image for r in requests],
+            padding=True,
+            return_tensors="pt",
+        ).to(self._model.device)
+
+        with torch.inference_mode():
+            out = self._model.generate(
+                **inputs, max_new_tokens=max_new_tokens, do_sample=False
+            )
+        trimmed = [o[len(i):] for i, o in zip(inputs.input_ids, out)]
+        return self._processor.batch_decode(
+            trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
+
+    def processed_size(self, image: Image.Image) -> tuple[int, int]:
+        """Pixel dimensions the processor resized `image` to.
+
+        Grounding coordinates come back in this space, not the original's
+        (spec §4.2), so boxes must be rescaled before leaving the backend.
+
+        Note the Qwen2-VL family's image processor does NOT return a 4D
+        pixel_values tensor - it returns flattened patches plus an
+        image_grid_thw giving the grid in patch units. Multiplying the grid
+        by patch_size recovers the resized pixel dimensions.
+        """
+        try:
+            out = self._processor.image_processor(images=[image], return_tensors="pt")
+            _, grid_h, grid_w = out["image_grid_thw"][0].tolist()
+            patch = self._processor.image_processor.patch_size
+            return (grid_w * patch, grid_h * patch)
+        except (KeyError, AttributeError, ValueError):
+            # Falling back to the original size means boxes are not rescaled.
+            # Step 4 below prints this value precisely so a silent mismatch
+            # cannot hide - if it equals the input size on a large photo,
+            # the grid lookup broke and boxes will be drawn in the wrong place.
+            return image.size
