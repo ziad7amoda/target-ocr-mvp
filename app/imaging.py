@@ -2,8 +2,13 @@
 
 This is a port of enhance() from the original browser demo (ocr-demo.html).
 Keeping the same algorithm matters: the preprocessing already validated by
-eye in the browser is exactly what feeds pass B, so a disagreement between
-passes reflects the model's reading, not an untested new transform.
+eye in the browser is what feeds pass B, so a disagreement between passes
+reflects the model's reading, not an untested new transform.
+
+Note: The browser implementation truncates luma to int with |0 and writes
+through Uint8ClampedArray (which rounds), while this port keeps float32 until
+.astype(np.uint8) truncation. Results differ by up to ~1 grey level, which is
+immaterial to vision model performance.
 """
 
 import numpy as np

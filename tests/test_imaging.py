@@ -23,10 +23,17 @@ def test_output_is_grayscale_but_still_rgb_mode():
     assert (px[:, :, 0] == px[:, :, 1]).all() and (px[:, :, 1] == px[:, :, 2]).all()
 
 
-def test_flat_image_does_not_divide_by_zero():
+def test_flat_image_does_not_divide_by_zero(recwarn):
+    """The max(1.0, hi-lo) guard is load-bearing: without it numpy returns nan
+    (a RuntimeWarning, not an exception) and nan.astype(uint8) silently becomes 0,
+    so a flat image would still 'work' while the guard was quietly gone."""
     src = Image.new("RGB", (16, 16), (128, 128, 128))
     out = np.asarray(contrast_normalise(src).convert("L"))
+
     assert out.shape == (16, 16)
+    assert not np.isnan(out.astype(np.float32)).any()
+    assert (out == 0).all()          # (128-128)/1.0*255 == 0, deterministic
+    assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)]
 
 
 def test_preserves_dimensions():
