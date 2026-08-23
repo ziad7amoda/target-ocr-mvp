@@ -77,3 +77,27 @@ def test_ignores_box_entries_that_are_not_four_numbers():
 def test_box_parsing_never_raises_on_garbage():
     """Grounding is optional (spec §4.3): its failure must not fail extraction."""
     assert parse_boxes("no boxes here") == {}
+
+
+def test_boolean_value_is_a_type_mismatch_not_a_number():
+    """bool subclasses int, so a naive isinstance(v, (int, float)) coerces
+    True into the string "True" - a confident-looking wrong answer, which is
+    exactly what this module exists to prevent."""
+    with pytest.raises(ParseError):
+        parse_card_json('{"full_name": true}')
+    with pytest.raises(ParseError):
+        parse_card_json('{"sex": false}')
+
+
+def test_parse_boxes_returns_empty_for_non_string_input():
+    """The never-raises contract is unconditional."""
+    assert parse_boxes(None) == {}
+    assert parse_boxes(123) == {}
+
+
+def test_empty_and_whitespace_values_normalise_to_none():
+    """Documented in the module docstring but previously untested. An empty
+    string must not survive as a value that later reads as a real answer."""
+    card = parse_card_json('{"full_name": "", "id_number": "   "}')
+    assert card.full_name is None
+    assert card.id_number is None

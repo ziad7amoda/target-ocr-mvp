@@ -44,7 +44,9 @@ def parse_card_json(text: str) -> CardFields:
     # Unquoted numbers are unambiguous, so coerce rather than fail. Empty
     # strings mean the same thing as null and are normalised to it.
     for key, value in list(data.items()):
-        if isinstance(value, (int, float)):
+        if isinstance(value, bool):
+            continue
+        elif isinstance(value, (int, float)):
             data[key] = str(value)
         elif isinstance(value, str) and not value.strip():
             data[key] = None
@@ -58,6 +60,8 @@ def parse_card_json(text: str) -> CardFields:
 def parse_boxes(text: str) -> dict[str, list[int]]:
     """Best-effort box extraction. Never raises: grounding is optional and its
     failure must leave extraction intact (spec §4.3)."""
+    if not isinstance(text, str):
+        return {}
     try:
         data = json.loads(strip_fences(text))
     except (json.JSONDecodeError, ValueError):
