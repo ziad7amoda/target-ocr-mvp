@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.pytest_cache/
+_debug_images/
+eval/fonts/
+eval/samples/*.jpg
+eval/samples/*.png
+.ipynb_checkpoints/
