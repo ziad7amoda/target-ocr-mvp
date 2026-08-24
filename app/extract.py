@@ -48,7 +48,7 @@ def _all_missing(raw_text: str, model_id: str, elapsed_ms: int) -> ExtractRespon
     return ExtractResponse(
         fields={f: FieldResult(value=None, status="missing") for f in FIELD_NAMES},
         raw_text=raw_text,
-        agreement=Agreement(matched=0, total=len(FIELD_NAMES)),
+        agreement=Agreement(matched=0, compared=0, total=len(FIELD_NAMES)),
         elapsed_ms=elapsed_ms,
         model=model_id,
     )
@@ -79,10 +79,10 @@ def extract(image: Image.Image, engine, settings, processed_size=None) -> Extrac
     t0 = time.perf_counter()
 
     requests = [GenerationRequest(image=image, prompt=FIELD_PROMPT)]
+    contrast_image = None
     if settings.SELF_CONSISTENCY:
-        requests.append(
-            GenerationRequest(image=contrast_normalise(image), prompt=FIELD_PROMPT)
-        )
+        contrast_image = contrast_normalise(image)
+        requests.append(GenerationRequest(image=contrast_image, prompt=FIELD_PROMPT))
     requests.append(GenerationRequest(image=image, prompt=GROUNDING_PROMPT))
 
     replies = engine.generate(requests)
@@ -98,7 +98,13 @@ def extract(image: Image.Image, engine, settings, processed_size=None) -> Extrac
     # every field to `review` rather than claiming an unverified `ok`.
     secondary = None
     if secondary_text is not None:
-        secondary, _ = _parse_with_retry(secondary_text, image, engine, settings)
+        # The retry MUST re-read the contrast image, not the original. Decoding
+        # is greedy (do_sample=False), so retrying pass B over pass A's pixels
+        # would just be a second read of the SAME image: the two passes would
+        # then agree by construction, rule 2 ("passes disagreed") - the only
+        # check that catches a well-formed hallucination - could never fire,
+        # and the field would be served `ok` unchecked.
+        secondary, _ = _parse_with_retry(secondary_text, contrast_image, engine, settings)
 
     fields, agreement = merge_passes(primary, secondary)
 

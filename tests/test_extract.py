@@ -123,3 +123,15 @@ def test_reports_elapsed_and_model():
     resp = extract(_img(), FakeEngine(_replies()), Settings())
     assert resp.elapsed_ms >= 0
     assert resp.model == "fake"
+
+
+def test_secondary_retry_rereads_the_contrast_image_not_the_original():
+    """If pass B's retry re-read the original image, greedy decoding would make
+    the two passes agree by construction, rule 2 could never fire, and every
+    field would be served `ok` unchecked - the exact hole the design closes."""
+    engine = FakeEngine([json.dumps(GOOD), "not json", json.dumps(BOXES), json.dumps(GOOD)])
+    img = _img()
+    extract(img, engine, Settings())
+    retry_request = engine.calls[1][0]
+    assert retry_request.image is not img
+    assert retry_request.image is engine.calls[0][1].image
