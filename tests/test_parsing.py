@@ -22,19 +22,18 @@ def test_leaves_clean_json_untouched():
 
 def test_parses_a_full_card():
     raw = (
-        '{"full_name": "JOHN A SMITH", "full_name_ar": "جون سميث", '
+        '{"card_type": "citizen", "full_name_ar": "جون سميث", '
         '"id_number": "12345678", "date_of_birth": "1990-04-12", '
-        '"expiry_date": "2030-04-11", "nationality": "OMANI", '
-        '"nationality_ar": "عماني", "sex": "M", "sex_ar": "ذكر"}'
+        '"expiry_date": "2030-04-11", "place_of_birth_ar": "مسقط"}'
     )
     card = parse_card_json(raw)
-    assert card.full_name == "JOHN A SMITH"
-    assert card.sex_ar == "ذكر"
+    assert card.card_type == "citizen"
+    assert card.full_name_ar == "جون سميث"
 
 
 def test_parses_fenced_output_with_nulls():
-    card = parse_card_json('```json\n{"full_name": null, "id_number": "12345678"}\n```')
-    assert card.full_name is None
+    card = parse_card_json('```json\n{"full_name_ar": null, "id_number": "12345678"}\n```')
+    assert card.full_name_ar is None
     assert card.id_number == "12345678"
 
 
@@ -46,7 +45,7 @@ def test_coerces_a_numeric_id_number_to_string():
 
 def test_raises_on_truncated_json():
     with pytest.raises(ParseError):
-        parse_card_json('{"full_name": "JOHN')
+        parse_card_json('{"full_name_ar": "JOHN')
 
 
 def test_raises_on_no_json_at_all():
@@ -56,7 +55,7 @@ def test_raises_on_no_json_at_all():
 
 def test_raises_on_unknown_key():
     with pytest.raises(ParseError):
-        parse_card_json('{"full_name": "X", "eye_colour": "brown"}')
+        parse_card_json('{"full_name_ar": "X", "eye_colour": "brown"}')
 
 
 def test_parses_boxes():
@@ -84,9 +83,9 @@ def test_boolean_value_is_a_type_mismatch_not_a_number():
     True into the string "True" - a confident-looking wrong answer, which is
     exactly what this module exists to prevent."""
     with pytest.raises(ParseError):
-        parse_card_json('{"full_name": true}')
+        parse_card_json('{"full_name_ar": true}')
     with pytest.raises(ParseError):
-        parse_card_json('{"sex": false}')
+        parse_card_json('{"card_type": false}')
 
 
 def test_parse_boxes_returns_empty_for_non_string_input():
@@ -98,6 +97,6 @@ def test_parse_boxes_returns_empty_for_non_string_input():
 def test_empty_and_whitespace_values_normalise_to_none():
     """Documented in the module docstring but previously untested. An empty
     string must not survive as a value that later reads as a real answer."""
-    card = parse_card_json('{"full_name": "", "id_number": "   "}')
-    assert card.full_name is None
+    card = parse_card_json('{"full_name_ar": "", "id_number": "   "}')
+    assert card.full_name_ar is None
     assert card.id_number is None

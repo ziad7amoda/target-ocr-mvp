@@ -48,14 +48,14 @@ def test_identical_box_claimed_by_three_fields_is_dropped_for_all():
     """Model collapse: one box repeated for everything is not grounding."""
     box = [100, 50, 400, 90]
     out = filter_boxes(
-        {"full_name": box, "sex": list(box), "nationality": list(box)}, PROC, ORIG
+        {"full_name": box, "card_type": list(box), "place_of_birth": list(box)}, PROC, ORIG
     )
     assert out == {}
 
 
 def test_identical_box_claimed_by_two_fields_survives():
     box = [100, 50, 400, 90]
-    out = filter_boxes({"full_name": box, "sex": list(box)}, PROC, ORIG)
+    out = filter_boxes({"full_name": box, "card_type": list(box)}, PROC, ORIG)
     assert len(out) == 2
 
 

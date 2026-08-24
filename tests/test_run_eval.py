@@ -4,9 +4,9 @@ from eval.run_eval import iou, score
 EXPECTED = {
     "a.jpg": {
         "fields": {
-            "full_name": "JOHN A SMITH", "id_number": "12345678",
+            "card_type": "citizen", "full_name": "JOHN A SMITH", "id_number": "12345678",
             "date_of_birth": "1990-04-12", "expiry_date": "2030-04-11",
-            "nationality": "OMANI", "sex": "M",
+            "place_of_birth": "MUSCAT",
         },
         "boxes": {"full_name": [100, 100, 400, 140]},
     }

@@ -1,3 +1,5 @@
+import pytest
+
 from app.validate import check_arabic, check_cross_fields, check_format
 
 
@@ -31,19 +33,39 @@ def test_out_of_range_year_is_flagged():
     assert check_format("expiry_date", "1832-01-01") is not None
 
 
+@pytest.mark.skip(
+    reason="superseded by revision R3 - sex is not printed on Omani ID cards "
+    "(see docs/superpowers/specs/2026-08-24-revision-real-card-findings.md); "
+    "it is no longer a field, so this format rule has no home. check_format() "
+    "still has the branch pending R3's cleanup of app/validate.py."
+)
 def test_valid_sex_passes():
     assert check_format("sex", "M") is None
     assert check_format("sex", "F") is None
 
 
+@pytest.mark.skip(
+    reason="superseded by revision R3 - sex is not printed on Omani ID cards; "
+    "it is no longer a field, so this format rule has no home."
+)
 def test_unexpected_sex_value_is_flagged():
     assert check_format("sex", "MALE") is not None
 
 
+@pytest.mark.skip(
+    reason="superseded by revision R3 - nationality is not printed on Omani "
+    "ID cards (see docs/superpowers/specs/2026-08-24-revision-real-card-findings.md); "
+    "it is no longer a field, so this format rule has no home. check_format() "
+    "still has the branch pending R3's cleanup of app/validate.py."
+)
 def test_known_nationality_passes():
     assert check_format("nationality", "OMANI") is None
 
 
+@pytest.mark.skip(
+    reason="superseded by revision R3 - nationality is not printed on Omani "
+    "ID cards; it is no longer a field, so this format rule has no home."
+)
 def test_unknown_nationality_is_flagged_not_rejected():
     reason = check_format("nationality", "ATLANTEAN")
     assert reason is not None and "list" in reason
