@@ -12,10 +12,11 @@ to look at; "confidence 62%" does not tell them anything actionable.
 """
 
 import re
+import unicodedata
 from datetime import date
 from pathlib import Path
 
-from app.schema import ARABIC_FIELDS
+from app.schema import ARABIC_FIELDS, FIELD_NAMES, Agreement, CardFields, FieldResult
 
 _ID_NUMBER = re.compile(r"^\d{8}$")
 _HAS_DIGIT = re.compile(r"\d")
@@ -122,3 +123,87 @@ def check_cross_fields(values: dict[str, str | None]) -> dict[str, str]:
             out["date_of_birth"] = f"implies an age over {_MAX_AGE_YEARS}"
 
     return out
+
+
+def _normalise(value: str | None) -> str | None:
+    """Comparison form for cross-pass agreement.
+
+    NFC first so two byte-different but identical Arabic strings compare
+    equal; then case-fold and collapse whitespace so trivial formatting
+    differences are not reported to a human as a disagreement.
+    """
+    if value is None:
+        return None
+    return " ".join(unicodedata.normalize("NFC", value).split()).casefold()
+
+
+def merge_passes(
+    primary: CardFields, secondary: CardFields | None
+) -> tuple[dict[str, FieldResult], Agreement]:
+    """Combine two extraction passes into per-field results and statuses.
+
+    `secondary=None` means the consistency pass failed or was disabled.
+
+    Rule order (spec §5), first match wins:
+        1. null in both              -> missing
+        2. passes disagree           -> review, "passes disagreed"
+        3. format rule fails         -> review, names the rule
+        4. cross-field check fails   -> review, names the check
+        5. otherwise                 -> ok
+
+    Rule 2 precedes rule 3 deliberately. Format rules cannot catch
+    hallucination: a fabricated 8-digit civil number satisfies every one of
+    them. Two passes over differently-preprocessed images rarely fabricate
+    the SAME wrong value, which makes disagreement the strongest signal
+    available - and therefore the one a reviewer should be shown first.
+    """
+    latin = {f: getattr(primary, f) for f in FIELD_NAMES}
+    cross = check_cross_fields(latin)
+
+    results: dict[str, FieldResult] = {}
+    matched = 0
+
+    for field in FIELD_NAMES:
+        value = getattr(primary, field)
+        value_ar = getattr(primary, f"{field}_ar", None) if field in ARABIC_FIELDS else None
+
+        # Rule 1. `missing` always outranks `review`, including when the
+        # consistency pass is unavailable.
+        if value is None and (secondary is None or getattr(secondary, field) is None):
+            results[field] = FieldResult(value=None, value_ar=None, status="missing")
+            continue
+
+        if secondary is None:
+            results[field] = FieldResult(
+                value=value,
+                value_ar=value_ar,
+                status="review",
+                reason="consistency pass unavailable",
+            )
+            continue
+
+        # Rule 2. Arabic disagreement flags the field just as Latin does.
+        agrees = _normalise(value) == _normalise(getattr(secondary, field))
+        if field in ARABIC_FIELDS:
+            agrees = agrees and _normalise(value_ar) == _normalise(
+                getattr(secondary, f"{field}_ar", None)
+            )
+
+        if not agrees:
+            results[field] = FieldResult(
+                value=value, value_ar=value_ar, status="review", reason="passes disagreed"
+            )
+            continue
+
+        matched += 1
+
+        # Rules 3 and 4.
+        reason = check_format(field, value) or check_arabic(field, value_ar) or cross.get(field)
+        results[field] = FieldResult(
+            value=value,
+            value_ar=value_ar,
+            status="review" if reason else "ok",
+            reason=reason,
+        )
+
+    return results, Agreement(matched=matched, total=len(FIELD_NAMES))
