@@ -49,7 +49,7 @@ def test_extract_returns_a_schema_conforming_response():
         "full_name", "id_number", "date_of_birth", "expiry_date", "nationality", "sex",
     }
     assert body["fields"]["id_number"]["status"] == "ok"
-    assert body["agreement"] == {"matched": 6, "total": 6}
+    assert body["agreement"] == {"matched": 6, "compared": 6, "total": 6}
     assert body["model"] == "fake"
 
 

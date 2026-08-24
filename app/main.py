@@ -30,9 +30,13 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 class ValueLeakFilter(logging.Filter):
     """Spec §10 enforcement.
 
-    Rejecting records that carry a `value` attribute makes a careless
-    logger.info(..., extra={"value": x}) added later fail loudly instead of
-    leaking a customer's ID number into a log file quietly.
+    A `logging.Filter` that returns False does not raise - it silently
+    drops the record instead of emitting it. So a careless
+    logger.info(..., extra={"value": x}) added later does not fail loudly;
+    it vanishes from the logs with no error. That silence is deliberate:
+    it prevents a customer's ID number from leaking into a log file, but a
+    developer who adds a `value` extra should expect their log line to
+    disappear, not to see an exception.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -49,7 +53,12 @@ async def _read_image(upload: UploadFile) -> Image.Image:
 
 def create_app(engine=None, settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    logger.addFilter(ValueLeakFilter())
+    # Idempotent: create_app() runs once per test in a large suite against
+    # the same module-level "app" logger, and addFilter() has no built-in
+    # dedup - without this check, duplicate filters stack up harmlessly but
+    # pointlessly across calls.
+    if not any(isinstance(f, ValueLeakFilter) for f in logger.filters):
+        logger.addFilter(ValueLeakFilter())
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

@@ -162,6 +162,7 @@ def merge_passes(
 
     results: dict[str, FieldResult] = {}
     matched = 0
+    compared = 0
 
     for field in FIELD_NAMES:
         value = getattr(primary, field)
@@ -181,6 +182,10 @@ def merge_passes(
                 reason="consistency pass unavailable",
             )
             continue
+
+        # This field reached an actual comparison - the denominator for the
+        # Agreement tile, as opposed to `total` which counts every field.
+        compared += 1
 
         # Rule 2. Arabic disagreement flags the field just as Latin does.
         agrees = _normalise(value) == _normalise(getattr(secondary, field))
@@ -206,4 +211,4 @@ def merge_passes(
             reason=reason,
         )
 
-    return results, Agreement(matched=matched, total=len(FIELD_NAMES))
+    return results, Agreement(matched=matched, compared=compared, total=len(FIELD_NAMES))

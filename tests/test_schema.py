@@ -46,7 +46,7 @@ def test_extract_response_round_trips():
     r = ExtractResponse(
         fields={"sex": FieldResult(value="M", value_ar="ذكر", status="ok")},
         raw_text="{}",
-        agreement=Agreement(matched=1, total=6),
+        agreement=Agreement(matched=1, compared=1, total=6),
         elapsed_ms=3180,
         model="Qwen2.5-VL-3B-Instruct",
     )

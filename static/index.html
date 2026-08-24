@@ -602,7 +602,13 @@ function renderResults(res){
   const entries = Object.entries(res.fields);
   const found = entries.filter(([,f]) => f.status !== "missing").length;
 
-  el("mAgree").textContent  = `${res.agreement.matched}/${res.agreement.total}`;
+  // matched/compared, not matched/total: a field the model could not read
+  // never reached the comparison, and must not read as a disagreement.
+  // compared === 0 means the consistency pass never ran at all - "not
+  // measured", not "everything disagreed".
+  el("mAgree").textContent  = res.agreement.compared === 0
+    ? "—"
+    : `${res.agreement.matched}/${res.agreement.compared}`;
   el("mFields").textContent = `${found}/${entries.length}`;
   el("mTime").textContent   = (res.elapsed_ms/1000).toFixed(1) + "s";
   el("rawText").textContent = res.raw_text || "—";

@@ -15,7 +15,7 @@ EXPECTED = {
 
 def _response(fields):
     return ExtractResponse(
-        fields=fields, raw_text="{}", agreement=Agreement(matched=6, total=6),
+        fields=fields, raw_text="{}", agreement=Agreement(matched=6, compared=6, total=6),
         elapsed_ms=100, model="fake",
     )
 
@@ -89,3 +89,57 @@ def test_absent_box_is_not_counted_against_the_hit_rate():
     """A box the filter dropped is a non-answer, not a wrong answer."""
     report = score({"a.jpg": _response(_all_ok())}, EXPECTED)
     assert report.box_total == 0
+
+
+def test_box_coverage_counts_fields_with_ground_truth_but_no_returned_box():
+    """box_total alone is self-selecting: a filter that drops 90% of boxes
+    would still report a flattering hit rate on the remaining 10%.
+    box_expected is the true denominator - it must count a field that has
+    ground truth even when no box came back."""
+    report = score({"a.jpg": _response(_all_ok())}, EXPECTED)
+    assert report.box_expected == 1
+    assert report.box_total == 0
+
+
+def test_box_coverage_includes_returned_boxes_too():
+    hit = _all_ok(full_name=FieldResult(value="JOHN A SMITH", status="ok", box=(105, 102, 395, 138)))
+    report = score({"a.jpg": _response(hit)}, EXPECTED)
+    assert report.box_expected == 1
+    assert report.box_total == 1
+
+
+def test_wrong_value_ar_on_an_ok_field_is_a_silent_error():
+    """value_ar is the field a bank actually keys in. A wrong Arabic value
+    served as `ok` must show up in the silent error count, distinguishable
+    from a Latin-value error by the `_ar` suffix."""
+    expected_with_ar = {
+        "a.jpg": {
+            "fields": {**EXPECTED["a.jpg"]["fields"], "full_name_ar": "جون سميث"},
+            "boxes": EXPECTED["a.jpg"]["boxes"],
+        }
+    }
+    wrong = _all_ok(full_name=FieldResult(value="JOHN A SMITH", value_ar="جون سميثي", status="ok"))
+    report = score({"a.jpg": _response(wrong)}, expected_with_ar)
+    assert len(report.silent_errors) == 1
+    err = report.silent_errors[0]
+    assert err.field == "full_name_ar"
+    assert err.got == "جون سميثي" and err.expected == "جون سميث"
+
+
+def test_correct_value_ar_is_not_a_silent_error():
+    expected_with_ar = {
+        "a.jpg": {
+            "fields": {**EXPECTED["a.jpg"]["fields"], "full_name_ar": "جون سميث"},
+            "boxes": EXPECTED["a.jpg"]["boxes"],
+        }
+    }
+    right = _all_ok(full_name=FieldResult(value="JOHN A SMITH", value_ar="جون سميث", status="ok"))
+    report = score({"a.jpg": _response(right)}, expected_with_ar)
+    assert report.silent_errors == []
+
+
+def test_missing_ground_truth_value_ar_is_not_scored():
+    """EXPECTED carries no `_ar` ground truth for most fixtures - value_ar
+    should simply be skipped, not treated as a mismatch."""
+    report = score({"a.jpg": _response(_all_ok())}, EXPECTED)
+    assert report.silent_errors == []

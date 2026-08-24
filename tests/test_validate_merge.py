@@ -17,7 +17,7 @@ GOOD = dict(
 def test_agreeing_valid_passes_are_all_ok():
     fields, agreement = merge_passes(CardFields(**GOOD), CardFields(**GOOD))
     assert {f.status for f in fields.values()} == {"ok"}
-    assert agreement.matched == 6 and agreement.total == 6
+    assert agreement.matched == 6 and agreement.compared == 6 and agreement.total == 6
 
 
 def test_null_in_both_passes_is_missing():
@@ -27,6 +27,17 @@ def test_null_in_both_passes_is_missing():
     assert fields["id_number"].value is None
 
 
+def test_a_missing_field_lowers_compared_but_not_matched():
+    """The Agreement tile must not read a missing field as a disagreement:
+    compared should exclude it while matched still equals compared for the
+    fields that were actually checked."""
+    blank = CardFields(**{**GOOD, "id_number": None})
+    fields, agreement = merge_passes(blank, blank)
+    assert fields["id_number"].status == "missing"
+    assert agreement.compared == 5 < agreement.total == 6
+    assert agreement.matched == agreement.compared == 5
+
+
 def test_disagreement_is_review():
     a = CardFields(**GOOD)
     b = CardFields(**{**GOOD, "id_number": "12345679"})
@@ -34,6 +45,7 @@ def test_disagreement_is_review():
     assert fields["id_number"].status == "review"
     assert fields["id_number"].reason == "passes disagreed"
     assert agreement.matched == 5
+    assert agreement.compared == 6  # the field was compared - it just disagreed
 
 
 def test_primary_value_is_kept_when_passes_disagree():
@@ -99,6 +111,9 @@ def test_missing_secondary_downgrades_everything_to_review():
     assert {f.status for f in fields.values()} == {"review"}
     assert fields["sex"].reason == "consistency pass unavailable"
     assert agreement.matched == 0
+    # Nothing was ever compared, not "everything disagreed": the UI must
+    # render this as "not measured" rather than 0/6.
+    assert agreement.compared == 0
 
 
 def test_missing_secondary_still_reports_null_fields_as_missing():

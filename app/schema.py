@@ -45,6 +45,12 @@ class FieldResult(BaseModel):
 
 class Agreement(BaseModel):
     matched: int
+    # Fields that actually reached the cross-pass comparison - i.e. excludes
+    # fields that were `missing` (never compared) or where the consistency
+    # pass was unavailable entirely. `matched <= compared <= total`. A UI
+    # should render matched/compared, not matched/total: a card with
+    # illegible fields should not read as those fields having disagreed.
+    compared: int
     total: int
 
 
