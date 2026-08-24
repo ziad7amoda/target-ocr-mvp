@@ -3,12 +3,21 @@
 The shape of this module is dictated by one measurement: on a T4, decode is
 bound by weight bandwidth, not compute. A batch re-reads the same ~6GB of
 weights once regardless of how many sequences it carries, so the
-self-consistency pass and the grounding pass are close to free in
-wall-clock while a second sequential call would cost another full inference
-(spec D5, §15).
+self-consistency pass is close to free in wall-clock while a second
+sequential call would cost another full inference (spec D5, §15).
 
-Hence: one generate(), three sequences, and every prompt kept short because
-roughly every 30 output tokens costs a second.
+Hence: one generate(), and every prompt kept short because roughly every 18
+output tokens costs about a second on the target hardware.
+
+Revision 2026-08-24 (docs/superpowers/specs/2026-08-24-revision-real-card-findings.md,
+R7): grounding returned no usable boxes against real cards, so SHOW_BOXES now
+defaults to false and, when it is false, the grounding GenerationRequest is
+never issued at all - not just filtered out afterwards. That means the
+normal batch is TWO sequences (primary + consistency), not three. The
+grounding reply is only ever read from `replies[-1]` when a grounding
+request was actually appended; see the `grounding_requested` flag below.
+Reading `replies[-1]` unconditionally would, with grounding disabled, read
+pass B's field JSON as if it were box data.
 """
 
 import time
@@ -25,17 +34,33 @@ from app.validate import merge_passes
 FIELD_PROMPT = """You are reading an Omani national ID card. Return ONLY a JSON object, no markdown fences, no commentary.
 
 Keys, all required:
-  full_name, full_name_ar, id_number, date_of_birth, expiry_date, nationality, nationality_ar, sex, sex_ar
+  card_type, full_name_ar, id_number, date_of_birth, expiry_date, place_of_birth_ar
+
+card_type: "citizen" if the card says البطاقة الشخصية / IDENTITY CARD, "resident" if it
+says بطاقة مقيم / RESIDENT CARD.
+
+full_name_ar: the الإسم line, in Arabic script. The card prints no Latin name. These
+names have five to eight components (given name, father, grandfather, family names) -
+transcribe EVERY component, do not stop early.
+
+place_of_birth_ar: the مكان الميلاد line, in Arabic script. The card prints no Latin
+place name.
+
+id_number: the 8-digit civil number, digits only.
+
+date_of_birth, expiry_date: dates are PRINTED on the card as DD/MM/YYYY. You must
+convert to ISO YYYY-MM-DD, never return the card's printed format. Example: a card
+printed with 11/08/1989 means 11 August 1989, so the value you return is "1989-08-11",
+NOT "1989-11-08".
 
 Rules:
-- Dates as ISO YYYY-MM-DD.
-- sex is exactly "M" or "F".
-- Latin keys hold Latin script. Keys ending _ar hold Arabic script.
 - If a value is not clearly legible, return null for it.
-- Do NOT guess. Do NOT infer a value from context or from another field. A wrong value is far worse than null."""
+- Do NOT guess. Do NOT infer a value from context, from another field, from the card's
+  header or layout, or from the holder's photograph. A wrong value is far worse than
+  null."""
 
 GROUNDING_PROMPT = """Locate each printed field on this ID card. Return ONLY a JSON object mapping field name to bbox_2d as [x1, y1, x2, y2] in pixels.
-Fields: full_name, id_number, date_of_birth, expiry_date, nationality, sex
+Fields: card_type, full_name, id_number, date_of_birth, expiry_date, place_of_birth
 Omit any field you cannot locate."""
 
 TRANSCRIBE_PROMPT = "Transcribe all printed text on this card, line by line, exactly as it appears."
@@ -83,12 +108,20 @@ def extract(image: Image.Image, engine, settings, processed_size=None) -> Extrac
     if settings.SELF_CONSISTENCY:
         contrast_image = contrast_normalise(image)
         requests.append(GenerationRequest(image=contrast_image, prompt=FIELD_PROMPT))
-    requests.append(GenerationRequest(image=image, prompt=GROUNDING_PROMPT))
+    # Only issue the grounding request when boxes will actually be used - a
+    # discarded sequence still pays for a full prefill + decode. Because
+    # this flag gates both the append below and the read of replies[-1],
+    # replies[-1] can never be mistaken for the wrong pass's output: it is
+    # the grounding reply whenever grounding_requested is True, and it is
+    # simply never read when False.
+    grounding_requested = settings.SHOW_BOXES
+    if grounding_requested:
+        requests.append(GenerationRequest(image=image, prompt=GROUNDING_PROMPT))
 
     replies = engine.generate(requests)
     primary_text = replies[0]
     secondary_text = replies[1] if settings.SELF_CONSISTENCY else None
-    grounding_text = replies[-1]
+    grounding_text = replies[-1] if grounding_requested else None
 
     primary, primary_raw = _parse_with_retry(primary_text, image, engine, settings)
     if primary is None:
@@ -108,7 +141,7 @@ def extract(image: Image.Image, engine, settings, processed_size=None) -> Extrac
 
     fields, agreement = merge_passes(primary, secondary)
 
-    if settings.SHOW_BOXES:
+    if grounding_requested and grounding_text is not None:
         boxes = filter_boxes(
             parse_boxes(grounding_text), processed_size or image.size, image.size
         )
