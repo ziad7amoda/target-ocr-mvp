@@ -99,6 +99,27 @@ class QwenEngine:
 
     def load(self) -> None:
         import torch
+
+        # This check must run before any from_pretrained call, i.e. before any
+        # network I/O. With DEVICE=auto (the default) and no GPU, the naive
+        # sequence is: download ~6GB of weights from HuggingFace, THEN
+        # discover there's no CUDA device, THEN grind through a slow CPU
+        # load anyway. A multi-gigabyte download triggered by a default
+        # setting is a trap, not a fallback - fail fast instead, before a
+        # single byte moves. DEVICE=cpu remains a deliberate opt-in escape
+        # hatch for the (very slow) CPU path; only the accidental case is
+        # blocked.
+        if self._settings.DEVICE == "auto" and not torch.cuda.is_available():
+            raise RuntimeError(
+                "No GPU detected (torch.cuda.is_available() is False). "
+                "Refusing to download and load the model with DEVICE=auto, "
+                "since a CPU load of a multi-gigabyte VLM is impractical by "
+                "accident. The model was NOT downloaded. If you really want "
+                "to run on CPU, set DEVICE=cpu explicitly - this will work "
+                "but is extremely slow (likely minutes per request instead "
+                "of seconds)."
+            )
+
         from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
         dtype = getattr(torch, self._settings.TORCH_DTYPE)

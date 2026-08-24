@@ -43,8 +43,15 @@ Cloudflare tunnel provides.
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Then open http://localhost:8000/. Without a GPU the model will not load and
-`/api/health` reports `"loaded": false`.
+Then open http://localhost:8000/.
+
+**Without a GPU and `DEVICE=auto` (the default), startup fails fast** with a
+`RuntimeError` raised at the top of `QwenEngine.load()`, before any
+`from_pretrained` call: no multi-gigabyte download happens, and no slow CPU
+load is attempted by accident. The error message explains the situation and
+how to opt in anyway. If you deliberately want to run inference on CPU
+(functional, but extremely slow - think minutes per request), set
+`DEVICE=cpu` explicitly and the load will proceed.
 
 ## Configuration
 
@@ -57,3 +64,33 @@ All settings are environment variables; see `app/config.py`. The ones that matte
 | `SELF_CONSISTENCY` | `true` | **Debugging only.** Disabling removes hallucination detection |
 | `DEBUG_SAVE_IMAGES` | `false` | **Development only.** Writes card images to disk |
 | `ALLOWED_ORIGINS` | `["*"]` | Wide open for the demo. Narrow this for any real deployment |
+
+## Current status
+
+**Complete and tested (no GPU needed):** the full pipeline against
+`FakeEngine` - schema, config, image contrast normalisation, JSON fence
+stripping/repair, field parsing, format rules and cross-field checks, status
+derivation, the box geometry filter and coordinate rescaling, the
+`/api/extract` and `/api/health` API contracts, retry-then-missing behaviour,
+and the GPU-less startup guard added in this task (`QwenEngine.load()` fails
+fast with no download when no GPU is present and `DEVICE=auto`). 131 tests
+pass, 1 skipped, all runnable and verified on this machine.
+
+**Awaiting the user's hardware** - not executable in this environment and
+therefore not measured or invented:
+
+- **A Colab T4 run** (`scripts/bringup.py` and `notebook/run_colab.ipynb`):
+  cold weight load, warm-up time, warm single vs. batch-of-3 latency (the D5
+  batching assumption), peak VRAM, and confirming the notebook prints a
+  working HTTPS tunnel URL end to end.
+- **The Noto Naskh Arabic font** for `eval/make_samples.py`'s synthetic
+  cards, needed to exercise the Arabic-text rendering path before real
+  photos exist.
+- **Real ID card photos** for `eval/samples/` with hand-typed
+  `expected.json` ground truth, needed to run `eval/run_eval.py` and produce
+  the accuracy table, silent error rate, and box hit rate that decide the
+  `SHOW_BOXES` verdict (spec D4).
+
+See `docs/measurements.md` for the template these numbers land in once
+produced, and its acceptance-criteria table for the current pass/pending
+status of each of spec §14's eight criteria.
