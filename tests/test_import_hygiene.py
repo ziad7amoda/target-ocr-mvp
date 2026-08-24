@@ -18,6 +18,7 @@ GPU_FREE_MODULES = [
     "app/validate.py",
     "app/boxes.py",
     "app/extract.py",
+    "eval/run_eval.py",
 ]
 
 FORBIDDEN = {"torch", "transformers", "accelerate", "qwen_vl_utils"}

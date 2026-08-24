@@ -10,14 +10,33 @@ Backend: FastAPI + Qwen2.5-VL. Frontend: a single static page.
 
 ## Local development (no GPU required)
 
-The whole suite runs without torch. `app/model.py`'s `QwenEngine` imports torch
-lazily, so everything else is testable on any machine.
+The whole suite runs without torch: `requirements.txt` (and `requirements-dev.txt`,
+which layers on it) installs no torch-requiring package. `app/model.py`'s
+`QwenEngine` is the only thing that needs torch, transformers, accelerate, or
+qwen-vl-utils, and it imports them lazily, so everything else is testable on
+any machine.
 
 ```bash
 python -m venv .venv && . .venv/Scripts/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
 pytest -v
 ```
+
+## Colab / GPU deployment
+
+Installing just `requirements.txt` is not enough to run the model: it
+deliberately excludes the GPU-only inference stack (transformers, accelerate,
+qwen-vl-utils), which lives in `requirements-gpu.txt` because `accelerate`
+has a hard dependency on torch. Install both:
+
+```bash
+pip install -r requirements.txt -r requirements-gpu.txt
+```
+
+torch itself is not listed in either file - Colab preinstalls a build matched
+to its CUDA driver, and `notebook/run_colab.ipynb` (which does this install
+for you) relies on that. Camera capture requires HTTPS, which the notebook's
+Cloudflare tunnel provides.
 
 ## Running the server
 
@@ -39,8 +58,3 @@ All settings are environment variables; see `app/config.py`. The ones that matte
 | `SELF_CONSISTENCY` | `true` | **Debugging only.** Disabling removes hallucination detection |
 | `DEBUG_SAVE_IMAGES` | `false` | **Development only.** Writes card images to disk |
 | `ALLOWED_ORIGINS` | `["*"]` | Wide open for the demo. Narrow this for any real deployment |
-
-## Colab
-
-See `notebook/run_colab.ipynb`. Camera capture requires HTTPS, which the
-Cloudflare tunnel provides.

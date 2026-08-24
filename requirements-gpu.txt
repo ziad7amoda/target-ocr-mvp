@@ -1,0 +1,21 @@
+# GPU-only inference stack, needed only by app/model.py's QwenEngine.
+#
+# torch itself is NOT listed here and is deliberately unpinned: Colab
+# preinstalls a build matched to its CUDA driver, and pinning forces a
+# multi-minute reinstall. Install this file on top of a torch-provisioned
+# environment (Colab, or a GPU box with torch already installed).
+#
+# Empirically (pip show, checked against installed *.dist-info/METADATA):
+#   - accelerate declares an unconditional `Requires-Dist: torch>=2.0.0`,
+#     so `pip install accelerate` pulls in torch even when nothing else
+#     asks for it. This is why these three cannot live in requirements.txt:
+#     doing so silently broke the "local suite runs without torch" property.
+#   - qwen-vl-utils does not declare torch in its metadata, but its
+#     vision_process module does a top-level `import torchvision`, so it
+#     is unusable without a torch install even though pip won't fetch one.
+#   - transformers only pulls torch behind extras (`transformers[torch]`),
+#     but the Qwen2_5_VLForConditionalGeneration class app/model.py needs
+#     is unusable without it, and it is never imported outside the GPU seam.
+transformers>=4.49
+accelerate>=0.30
+qwen-vl-utils>=0.0.8

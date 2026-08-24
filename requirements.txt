@@ -1,5 +1,7 @@
-# Runtime. torch is deliberately NOT pinned here: Colab preinstalls a build
-# matched to its CUDA driver, and pinning forces a multi-minute reinstall.
+# Runtime for everything except the GPU inference seam (app/model.py).
+# torch and the packages that need it (transformers, accelerate,
+# qwen-vl-utils) live in requirements-gpu.txt - see that file for why.
+# This file installs cleanly, with no torch, on any machine.
 fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
@@ -7,8 +9,5 @@ pydantic>=2.6
 pydantic-settings>=2.2
 pillow>=10.2
 numpy>=1.26
-transformers>=4.49
-accelerate>=0.30
-qwen-vl-utils>=0.0.8
 arabic-reshaper>=3.0
 python-bidi>=0.4.2
