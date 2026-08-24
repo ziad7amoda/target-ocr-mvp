@@ -346,7 +346,9 @@
     </div>
 
     <div class="note">
-      Hover a field to highlight where it came from on the image. Fields without a box could not be located reliably.
+      <strong>ok</strong> means both readings of the card agreed and the value passed its format checks.
+      <strong>review</strong> means a human should check it — either the two readings disagreed or a check failed.
+      <strong>missing</strong> means the field could not be read at all.
     </div>
   </section>
 </main>
@@ -378,8 +380,8 @@ let hasImage = false, stream = null, busy = false, lastResult = null, tick = nul
 const STATUS_CLASS = { ok:"ok", review:"mid", missing:"low" };
 const STATUS_COLOUR = { ok:"#00B3A4", review:"#E0952C", missing:"#D2544B" };
 const FIELD_LABEL = {
-  full_name:"Name", id_number:"ID number", date_of_birth:"Date of birth",
-  expiry_date:"Expiry", nationality:"Nationality", sex:"Sex"
+  card_type:"Card type", full_name:"Name", id_number:"Civil number",
+  date_of_birth:"Date of birth", expiry_date:"Expiry", place_of_birth:"Place of birth"
 };
 
 function setStatus(msg){ statusEl.textContent = msg; }
@@ -617,12 +619,28 @@ function renderResults(res){
   for (const [name, f] of entries){
     const row = document.createElement("div");
     row.className = "field";
-    const arabic = f.value_ar
-      ? `<div class="v" dir="rtl" style="opacity:.75">${escapeHtml(f.value_ar)}</div>` : "";
     const title = f.reason ? ` title="${escapeHtml(f.reason)}"` : "";
+
+    // full_name and place_of_birth are Arabic-only: `value` is always null
+    // for them, and `value_ar` carries the real content. Render it as the
+    // PRIMARY line (not a demoted second line under an em dash) so the
+    // reviewer sees the printed name/place, not "—". Fields with a Latin
+    // `value` render that as before; a field with neither is `missing`.
+    let valueHtml;
+    if (f.value != null){
+      const display = name === "card_type"
+        ? f.value.charAt(0).toUpperCase() + f.value.slice(1)
+        : f.value;
+      valueHtml = `<div class="v">${escapeHtml(display)}</div>`;
+    } else if (f.value_ar != null){
+      valueHtml = `<div class="v" dir="rtl">${escapeHtml(f.value_ar)}</div>`;
+    } else {
+      valueHtml = `<div class="v">—</div>`;
+    }
+
     row.innerHTML =
       `<div class="k">${escapeHtml(FIELD_LABEL[name] || name)}</div>
-       <div><div class="v">${escapeHtml(f.value ?? "—")}</div>${arabic}</div>
+       <div>${valueHtml}</div>
        <div class="chip ${STATUS_CLASS[f.status]}"${title}>${f.status}</div>`;
     row.onmouseenter = () => drawBoxes(res.fields, name);
     row.onmouseleave = () => drawBoxes(res.fields);
