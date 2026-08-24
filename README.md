@@ -12,9 +12,8 @@ Backend: FastAPI + Qwen2.5-VL. Frontend: a single static page.
 
 The whole suite runs without torch: `requirements.txt` (and `requirements-dev.txt`,
 which layers on it) installs no torch-requiring package. `app/model.py`'s
-`QwenEngine` is the only thing that needs torch, transformers, accelerate, or
-qwen-vl-utils, and it imports them lazily, so everything else is testable on
-any machine.
+`QwenEngine` is the only thing that needs torch, transformers, or accelerate,
+and it imports them lazily, so everything else is testable on any machine.
 
 ```bash
 python -m venv .venv && . .venv/Scripts/activate   # Windows: .venv\Scripts\activate
@@ -25,9 +24,9 @@ pytest -v
 ## Colab / GPU deployment
 
 Installing just `requirements.txt` is not enough to run the model: it
-deliberately excludes the GPU-only inference stack (transformers, accelerate,
-qwen-vl-utils), which lives in `requirements-gpu.txt` because `accelerate`
-has a hard dependency on torch. Install both:
+deliberately excludes the GPU-only inference stack (transformers, accelerate),
+which lives in `requirements-gpu.txt` because `accelerate` has a hard
+dependency on torch. Install both:
 
 ```bash
 pip install -r requirements.txt -r requirements-gpu.txt

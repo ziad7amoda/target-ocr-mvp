@@ -1,6 +1,6 @@
 # Runtime for everything except the GPU inference seam (app/model.py).
-# torch and the packages that need it (transformers, accelerate,
-# qwen-vl-utils) live in requirements-gpu.txt - see that file for why.
+# torch and the packages that need it (transformers, accelerate) live in
+# requirements-gpu.txt - see that file for why.
 # This file installs cleanly, with no torch, on any machine.
 fastapi>=0.110
 uvicorn[standard]>=0.29
