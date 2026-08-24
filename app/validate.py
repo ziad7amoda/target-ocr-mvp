@@ -9,18 +9,26 @@ can actually be verified about the value itself.
 Each rule returns a human-readable reason on failure, which travels to the
 UI verbatim - a reviewer seeing "expiry precedes date of birth" knows what
 to look at; "confidence 62%" does not tell them anything actionable.
+
+Revision 2026-08-24 (docs/superpowers/specs/2026-08-24-revision-real-card-findings.md):
+real cards print full_name and place_of_birth ONLY in Arabic. CardFields
+therefore has no `full_name` / `place_of_birth` attribute, only the
+`_ar`-suffixed ones. `_field_value()` is the single place that knows how to
+pull a logical field's (value, value_ar) pair out of a CardFields instance -
+every other function goes through it instead of calling getattr() directly,
+so this asymmetry is handled in exactly one place.
 """
 
 import re
 import unicodedata
 from datetime import date
-from pathlib import Path
 
 from app.schema import ARABIC_FIELDS, FIELD_NAMES, Agreement, CardFields, FieldResult
 
 _ID_NUMBER = re.compile(r"^\d{8}$")
-_HAS_DIGIT = re.compile(r"\d")
 # Arabic (0600-06FF), Arabic Supplement, and Arabic Presentation Forms.
+# Kept byte-identical to the original - verified against real Arabic values
+# during the initial build and deliberately not touched here.
 _ARABIC_SCRIPT = re.compile(r"[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]")
 # date.fromisoformat is more permissive than its name suggests on Python 3.11+:
 # it also accepts basic format ("19900412") and ISO week dates ("2024-W01-1").
@@ -28,13 +36,25 @@ _ARABIC_SCRIPT = re.compile(r"[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]")
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 _DATE_FIELDS = ("date_of_birth", "expiry_date")
+_CARD_TYPES = {"citizen", "resident"}
 _MIN_YEAR, _MAX_YEAR = 1900, 2100
 _MAX_AGE_YEARS = 120
 
 
-def _nationalities() -> set[str]:
-    path = Path(__file__).parent / "data" / "nationalities.txt"
-    return {line.strip().upper() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
+def _field_value(card: CardFields, field: str) -> tuple[str | None, str | None]:
+    """Map a logical field name to its (value, value_ar) pair.
+
+    This is the one place that knows full_name/place_of_birth are
+    Arabic-only: they live at `<field>_ar` on CardFields and have no Latin
+    counterpart, while every other field is Latin-only and has no `_ar`
+    counterpart. Everything downstream (merge_passes, cross-field checks)
+    goes through this instead of calling getattr() directly, so a card with
+    an Arabic-only field never silently compares None to None (see
+    test_arabic_only_field_disagreement_is_detected).
+    """
+    if field in ARABIC_FIELDS:
+        return None, getattr(card, f"{field}_ar")
+    return getattr(card, field), None
 
 
 def _parse_iso(value: str) -> date | None:
@@ -50,13 +70,22 @@ def check_format(field: str, value: str | None) -> str | None:
     """Return a reason string if `value` fails its field's format rule.
 
     A null value is NOT a format failure - it is handled by the `missing`
-    rule, which outranks everything here (spec §5).
+    rule, which outranks everything here (spec §5). Arabic-only fields
+    (full_name, place_of_birth) have no Latin `value` to check here at all -
+    their checks live in check_arabic().
     """
     if value is None:
         return None
     value = value.strip()
 
-    if field == "id_number":
+    if field == "card_type":
+        # The only two card families seen on real cards (spec R2). Anything
+        # else means the model invented a value or misread the header -
+        # there is no third option to be lenient about.
+        if value not in _CARD_TYPES:
+            return "expected citizen or resident"
+
+    elif field == "id_number":
         # Omani civil numbers are 8 digits. Note this catches typos and
         # truncation but CANNOT catch a fabricated 8-digit number - that is
         # what the self-consistency check in merge_passes() is for.
@@ -70,34 +99,37 @@ def check_format(field: str, value: str | None) -> str | None:
         if not _MIN_YEAR <= parsed.year <= _MAX_YEAR:
             return f"year outside {_MIN_YEAR}-{_MAX_YEAR}"
 
-    elif field == "sex":
-        if value.upper() not in {"M", "F"}:
-            return "expected M or F"
-
-    elif field == "nationality":
-        if value.upper() not in _nationalities():
-            return "not in the known nationality list"
-
-    elif field == "full_name":
-        if len(value) < 2:
-            return "too short to be a name"
-        if _HAS_DIGIT.search(value):
-            return "contains digits"
-
     return None
 
 
 def check_arabic(field: str, value_ar: str | None) -> str | None:
-    """Verify an Arabic value is actually in Arabic script.
+    """Verify an Arabic value is actually plausible Arabic-script text.
 
-    Deliberately does NOT compare against the Latin value: transliteration
+    Deliberately does NOT compare against a Latin value: transliteration
     between the two is guesswork, and guesswork dressed as validation is
-    worse than no check (spec §5.2).
+    worse than no check (spec §5.2). There is no Latin value to compare
+    against anyway - full_name and place_of_birth are Arabic-only.
     """
     if field not in ARABIC_FIELDS or value_ar is None:
         return None
+    value_ar = value_ar.strip()
+
     if not _ARABIC_SCRIPT.search(value_ar):
         return "expected Arabic script"
+
+    # A one-character value is almost certainly a truncation or misread
+    # rather than a real name or place, regardless of script.
+    if len(value_ar) < 2:
+        return "too short to be valid"
+
+    if field == "full_name":
+        # Real Omani names are many components (see spec §3: a seven-
+        # component name truncated to three under a token ceiling). A
+        # single token is a strong truncation/misread signal worth
+        # surfacing to a reviewer even though the script check passed.
+        if len(value_ar.split()) < 2:
+            return "name has fewer than two components"
+
     return None
 
 
@@ -157,7 +189,7 @@ def merge_passes(
     the SAME wrong value, which makes disagreement the strongest signal
     available - and therefore the one a reviewer should be shown first.
     """
-    latin = {f: getattr(primary, f) for f in FIELD_NAMES}
+    latin = {f: getattr(primary, f) for f in FIELD_NAMES if f not in ARABIC_FIELDS}
     cross = check_cross_fields(latin)
 
     results: dict[str, FieldResult] = {}
@@ -165,12 +197,17 @@ def merge_passes(
     compared = 0
 
     for field in FIELD_NAMES:
-        value = getattr(primary, field)
-        value_ar = getattr(primary, f"{field}_ar", None) if field in ARABIC_FIELDS else None
+        value, value_ar = _field_value(primary, field)
+        is_null = value is None and value_ar is None
+
+        if secondary is not None:
+            sec_value, sec_value_ar = _field_value(secondary, field)
+        else:
+            sec_value = sec_value_ar = None
 
         # Rule 1. `missing` always outranks `review`, including when the
         # consistency pass is unavailable.
-        if value is None and (secondary is None or getattr(secondary, field) is None):
+        if is_null and (secondary is None or (sec_value is None and sec_value_ar is None)):
             results[field] = FieldResult(value=None, value_ar=None, status="missing")
             continue
 
@@ -187,12 +224,15 @@ def merge_passes(
         # Agreement tile, as opposed to `total` which counts every field.
         compared += 1
 
-        # Rule 2. Arabic disagreement flags the field just as Latin does.
-        agrees = _normalise(value) == _normalise(getattr(secondary, field))
-        if field in ARABIC_FIELDS:
-            agrees = agrees and _normalise(value_ar) == _normalise(
-                getattr(secondary, f"{field}_ar", None)
-            )
+        # Rule 2. Compare whichever side is actually populated for this
+        # field. An Arabic-only field has `value is None` on BOTH passes
+        # always - comparing `value` there would trivially "agree" every
+        # time and silently disable the hallucination check for full_name
+        # and place_of_birth, the two most important fields on the card
+        # (see test_arabic_only_field_disagreement_is_detected).
+        agrees = _normalise(value) == _normalise(sec_value) and _normalise(value_ar) == _normalise(
+            sec_value_ar
+        )
 
         if not agrees:
             results[field] = FieldResult(

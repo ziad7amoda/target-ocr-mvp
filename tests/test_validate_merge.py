@@ -1,30 +1,17 @@
-import pytest
-
 from app.schema import CardFields
 from app.validate import merge_passes
 
-# Revision R1 (see docs/superpowers/specs/2026-08-24-revision-real-card-findings.md):
-# merge_passes() does `getattr(primary, f) for f in FIELD_NAMES`, but
-# FIELD_NAMES now carries the logical names `full_name` / `place_of_birth`
-# while CardFields only exposes their `_ar`-suffixed counterparts (they are
-# Arabic-only - see schema.py). Every test below constructs a CardFields and
-# calls merge_passes(), so every one of them raises AttributeError until R3
-# teaches app/validate.py the new Arabic-only field convention. Skipped
-# wholesale rather than individually patched around, since the fix belongs
-# in app/validate.py, not in these fixtures.
-pytestmark = pytest.mark.skip(
-    reason="superseded by revision R3 - app/validate.py does not yet know "
-    "full_name/place_of_birth are Arabic-only (CardFields has no full_name "
-    "or place_of_birth attribute, only full_name_ar/place_of_birth_ar)"
-)
-
+# Revision R3 (see docs/superpowers/specs/2026-08-24-revision-real-card-findings.md):
+# fixture values drawn from the actual resident card that motivated this
+# revision - full_name and place_of_birth are Arabic-only, so GOOD carries
+# `full_name_ar` / `place_of_birth_ar` and no Latin counterpart.
 GOOD = dict(
-    card_type="citizen",
-    full_name_ar="جون سميث",
-    id_number="12345678",
-    date_of_birth="1990-04-12",
-    expiry_date="2030-04-11",
-    place_of_birth_ar="مسقط",
+    card_type="resident",
+    full_name_ar="زياد نشأت عبد الحى ابو الوفا حموده",
+    id_number="70011864",
+    date_of_birth="2002-09-29",
+    expiry_date="2027-01-25",
+    place_of_birth_ar="جمهورية مصر العربية",
 )
 
 
@@ -54,7 +41,7 @@ def test_a_missing_field_lowers_compared_but_not_matched():
 
 def test_disagreement_is_review():
     a = CardFields(**GOOD)
-    b = CardFields(**{**GOOD, "id_number": "12345679"})
+    b = CardFields(**{**GOOD, "id_number": "70011865"})
     fields, agreement = merge_passes(a, b)
     assert fields["id_number"].status == "review"
     assert fields["id_number"].reason == "passes disagreed"
@@ -64,9 +51,9 @@ def test_disagreement_is_review():
 
 def test_primary_value_is_kept_when_passes_disagree():
     a = CardFields(**GOOD)
-    b = CardFields(**{**GOOD, "id_number": "12345679"})
+    b = CardFields(**{**GOOD, "id_number": "70011865"})
     fields, _ = merge_passes(a, b)
-    assert fields["id_number"].value == "12345678"
+    assert fields["id_number"].value == "70011864"
 
 
 def test_null_in_one_pass_only_is_a_disagreement_not_missing():
@@ -102,20 +89,20 @@ def test_cross_field_failure_is_review_on_both_dates():
 
 def test_arabic_disagreement_flags_the_field():
     a = CardFields(**GOOD)
-    b = CardFields(**{**GOOD, "full_name_ar": "جون سميثي"})
+    b = CardFields(**{**GOOD, "full_name_ar": "زياد نشأت عبد الحى ابو الوفا سالم"})
     fields, _ = merge_passes(a, b)
     assert fields["full_name"].status == "review"
 
 
 def test_arabic_is_only_populated_for_arabic_fields():
     fields, _ = merge_passes(CardFields(**GOOD), CardFields(**GOOD))
-    assert fields["full_name"].value_ar == "جون سميث"
+    assert fields["full_name"].value_ar == GOOD["full_name_ar"]
     assert fields["id_number"].value_ar is None
 
 
 def test_comparison_ignores_case_and_surrounding_whitespace():
     a = CardFields(**GOOD)
-    b = CardFields(**{**GOOD, "full_name_ar": "  جون سميث  "})
+    b = CardFields(**{**GOOD, "full_name_ar": f"  {GOOD['full_name_ar']}  "})
     fields, _ = merge_passes(a, b)
     assert fields["full_name"].status == "ok"
 
@@ -137,3 +124,30 @@ def test_missing_secondary_still_reports_null_fields_as_missing():
     fields, _ = merge_passes(card, None)
     assert fields["id_number"].status == "missing"
     assert fields["place_of_birth"].status == "review"
+
+
+def test_arabic_only_field_disagreement_is_detected():
+    """full_name and place_of_birth have no Latin value. If agreement compared
+    only `value`, both would be None on every card, every field would trivially
+    agree, and the hallucination check would be silently dead for the two most
+    important fields."""
+    a = CardFields(**GOOD)
+    b = CardFields(**{**GOOD, "full_name_ar": "اسم مختلف تماما"})
+    fields, agreement = merge_passes(a, b)
+    assert fields["full_name"].status == "review"
+    assert fields["full_name"].reason == "passes disagreed"
+
+
+def test_arabic_only_field_carries_value_ar_not_value():
+    fields, _ = merge_passes(CardFields(**GOOD), CardFields(**GOOD))
+    assert fields["full_name"].value is None
+    assert fields["full_name"].value_ar is not None
+    assert fields["id_number"].value is not None
+    assert fields["id_number"].value_ar is None
+
+
+def test_single_component_name_is_flagged_as_truncated():
+    """A real card's name has many components; one token means truncation."""
+    card = CardFields(**{**GOOD, "full_name_ar": "زياد"})
+    fields, _ = merge_passes(card, card)
+    assert fields["full_name"].status == "review"
