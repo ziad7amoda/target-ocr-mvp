@@ -4,7 +4,7 @@ import pytest
 from PIL import Image
 
 from app.config import Settings
-from app.extract import extract
+from app.extract import FIELD_PROMPT_NATURAL, FIELD_PROMPT_STRICT, extract
 from app.model import FakeEngine
 
 # Realistic fixture from the resident card in
@@ -180,3 +180,67 @@ def test_grounding_reply_is_not_confused_with_pass_b_when_boxes_disabled():
     resp = extract(_img(), engine, Settings(SHOW_BOXES=False))
     assert all(f.box is None for f in resp.fields.values())
     assert resp.fields["id_number"].status == "ok"
+
+
+# --- prompt style selection ------------------------------------------------
+# Spec (prompt-style comparison revision): FIELD_PROMPT_STRICT was tuned
+# iteratively against Qwen2.5-VL-3B and accreted a negative instruction per
+# observed failure. Run against a different model (Qari-OCR-0.4.0-VL-4B) it
+# produced valid, correctly-shaped JSON with the two Arabic fields
+# deliberately null - the accumulated "do not guess" coaching read as license
+# to decline exactly the fields it was written to fix. FIELD_PROMPT_NATURAL
+# is the minimal counterpart that is meant to transfer across models.
+
+
+def test_natural_prompt_is_meaningfully_shorter_than_strict():
+    assert len(FIELD_PROMPT_NATURAL) < len(FIELD_PROMPT_STRICT) * 0.5
+
+
+def test_natural_prompt_keeps_the_date_format_instruction():
+    """Factual, not coaching: the card genuinely prints DD/MM/YYYY. Without
+    this a model returns 8 November for a card printed 11/08."""
+    assert "DD/MM/YYYY" in FIELD_PROMPT_NATURAL
+    assert "YYYY-MM-DD" in FIELD_PROMPT_NATURAL
+
+
+def test_natural_prompt_keeps_the_null_instruction():
+    """Factual, not coaching: the whole status pipeline's definition of
+    'not read' depends on null meaning exactly that."""
+    assert "null" in FIELD_PROMPT_NATURAL
+
+
+def test_natural_prompt_drops_the_label_exclusion_list():
+    """The right-label/left-value layout explanation and the explicit
+    Arabic label exclusion list are Qwen-specific coaching, not facts about
+    the card, and must not appear in the natural prompt."""
+    assert "مكان الميلاد" not in FIELD_PROMPT_NATURAL
+    assert "الإسم" not in FIELD_PROMPT_NATURAL
+
+
+@pytest.mark.parametrize(
+    "style,expected_prompt",
+    [("strict", FIELD_PROMPT_STRICT), ("natural", FIELD_PROMPT_NATURAL)],
+)
+def test_extract_sends_the_prompt_matching_prompt_style(style, expected_prompt):
+    engine = FakeEngine(_replies())
+    extract(_img(), engine, Settings(PROMPT_STYLE=style))
+    a, b = engine.calls[0]
+    assert a.prompt == expected_prompt
+    assert b.prompt == expected_prompt
+
+
+@pytest.mark.parametrize(
+    "style,expected_prompt",
+    [("strict", FIELD_PROMPT_STRICT), ("natural", FIELD_PROMPT_NATURAL)],
+)
+def test_retry_path_uses_the_prompt_matching_prompt_style(style, expected_prompt):
+    engine = FakeEngine(["not json", json.dumps(GOOD), json.dumps(GOOD)])
+    extract(_img(), engine, Settings(PROMPT_STYLE=style))
+    retry_prompt = engine.calls[1][0].prompt
+    assert retry_prompt.startswith(expected_prompt)
+
+
+def test_unknown_prompt_style_raises_a_clear_error():
+    engine = FakeEngine(_replies())
+    with pytest.raises(ValueError, match="PROMPT_STYLE"):
+        extract(_img(), engine, Settings(PROMPT_STYLE="verbose"))

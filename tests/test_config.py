@@ -10,6 +10,7 @@ def test_defaults_match_spec():
     assert s.SELF_CONSISTENCY is True
     assert s.SHOW_BOXES is False
     assert s.DEBUG_SAVE_IMAGES is False
+    assert s.PROMPT_STYLE == "natural"
 
 
 def test_env_overrides_model_id(monkeypatch):
@@ -31,3 +32,8 @@ def test_load_in_8bit_can_be_disabled_by_env(monkeypatch):
 
 def test_get_settings_is_cached():
     assert get_settings() is get_settings()
+
+
+def test_prompt_style_can_be_overridden_by_env(monkeypatch):
+    monkeypatch.setenv("PROMPT_STYLE", "strict")
+    assert Settings().PROMPT_STYLE == "strict"

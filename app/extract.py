@@ -31,7 +31,7 @@ from app.parsing import ParseError, parse_boxes, parse_card_json
 from app.schema import FIELD_NAMES, Agreement, CardFields, ExtractResponse, FieldResult
 from app.validate import merge_passes
 
-FIELD_PROMPT = """You are reading an Omani national ID card. Return ONLY a JSON object, no markdown fences, no commentary.
+FIELD_PROMPT_STRICT = """You are reading an Omani national ID card. Return ONLY a JSON object, no markdown fences, no commentary.
 
 Keys, all required:
   card_type, full_name_ar, id_number, date_of_birth, expiry_date, place_of_birth_ar
@@ -70,6 +70,42 @@ Rules:
   header or layout, or from the holder's photograph. A wrong value is far worse than
   null."""
 
+# Minimal counterpart to FIELD_PROMPT_STRICT (spec: prompt-style comparison
+# revision). FIELD_PROMPT_STRICT accreted one negative instruction per
+# observed Qwen2.5-VL-3B failure and, as a result, does not transfer: run
+# against Qari-OCR-0.4.0-VL-4B it produced valid, correctly-shaped JSON with
+# full_name_ar and place_of_birth_ar deliberately set to null - the model
+# read the accumulated "do not guess" coaching as license to decline the
+# exact fields it was written to fix. This prompt asks plainly for what is
+# wanted and keeps only the two instructions that are factual, not coaching:
+# the DD/MM/YYYY -> ISO conversion (the card genuinely prints that format)
+# and null-for-unreadable (the status pipeline's definition of "not read").
+FIELD_PROMPT_NATURAL = """Read this Omani ID card and return a JSON object with exactly these keys:
+card_type, full_name_ar, id_number, date_of_birth, expiry_date, place_of_birth_ar
+
+card_type is "citizen" or "resident".
+full_name_ar is the person's full name in Arabic.
+place_of_birth_ar is the place of birth in Arabic.
+Dates are printed as DD/MM/YYYY; return them as YYYY-MM-DD.
+Use null for any value you cannot read.
+Return only the JSON object."""
+
+FIELD_PROMPTS = {
+    "strict": FIELD_PROMPT_STRICT,
+    "natural": FIELD_PROMPT_NATURAL,
+}
+
+
+def _field_prompt(settings) -> str:
+    try:
+        return FIELD_PROMPTS[settings.PROMPT_STYLE]
+    except KeyError:
+        raise ValueError(
+            f"Unknown PROMPT_STYLE {settings.PROMPT_STYLE!r}; "
+            f"expected one of {sorted(FIELD_PROMPTS)}"
+        ) from None
+
+
 GROUNDING_PROMPT = """Locate each printed field on this ID card. Return ONLY a JSON object mapping field name to bbox_2d as [x1, y1, x2, y2] in pixels.
 Fields: card_type, full_name, id_number, date_of_birth, expiry_date, place_of_birth
 Omit any field you cannot locate."""
@@ -101,7 +137,7 @@ def _parse_with_retry(
         return parse_card_json(text), text
     except ParseError as first:
         retry_prompt = (
-            f"{FIELD_PROMPT}\n\nYour previous reply could not be parsed: {first}. "
+            f"{_field_prompt(settings)}\n\nYour previous reply could not be parsed: {first}. "
             "Reply with the JSON object only."
         )
         retry = engine.generate([GenerationRequest(image=image, prompt=retry_prompt)])[0]
@@ -114,11 +150,12 @@ def _parse_with_retry(
 def extract(image: Image.Image, engine, settings, processed_size=None) -> ExtractResponse:
     t0 = time.perf_counter()
 
-    requests = [GenerationRequest(image=image, prompt=FIELD_PROMPT)]
+    field_prompt = _field_prompt(settings)
+    requests = [GenerationRequest(image=image, prompt=field_prompt)]
     contrast_image = None
     if settings.SELF_CONSISTENCY:
         contrast_image = contrast_normalise(image)
-        requests.append(GenerationRequest(image=contrast_image, prompt=FIELD_PROMPT))
+        requests.append(GenerationRequest(image=contrast_image, prompt=field_prompt))
     # Only issue the grounding request when boxes will actually be used - a
     # discarded sequence still pays for a full prefill + decode. Because
     # this flag gates both the append below and the read of replies[-1],

@@ -33,6 +33,18 @@ class Settings(BaseSettings):
     MIN_PIXELS: int = 256 * 28 * 28
     MAX_PIXELS: int = 1280 * 28 * 28
 
+    # Revision 2026-08-25 (prompt-style comparison): "strict" is the prompt
+    # tuned iteratively against Qwen2.5-VL-3B - it fixes observed day/month
+    # swaps, name-truncation, and label/value confusion bugs on that model,
+    # but the accumulated negative coaching does not transfer: run against
+    # NAMAA-Space/Qari-OCR-0.4.0-VL-4B it produced valid JSON with the two
+    # Arabic fields deliberately null. "natural" is a minimal prompt that
+    # asks plainly for what is wanted and is the fairer choice when
+    # comparing models. Neither style is uniformly better - which to use is
+    # a per-model choice, made from evidence on real cards, not a default
+    # to trust blindly.
+    PROMPT_STYLE: str = "natural"
+
     SELF_CONSISTENCY: bool = True
     # Revision 2026-08-24: grounding returned no usable boxes in the live run
     # against real cards. Per the design's own rule (D4), an overlay that
