@@ -39,14 +39,25 @@ Keys, all required:
 card_type: "citizen" if the card says البطاقة الشخصية / IDENTITY CARD, "resident" if it
 says بطاقة مقيم / RESIDENT CARD.
 
-full_name_ar: the الإسم line, in Arabic script. The card prints no Latin name. These
-names have five to eight components (given name, father, grandfather, family names) -
-transcribe EVERY component, do not stop early.
+full_name_ar: the person's full name, in Arabic script. The card prints no Latin name.
+These names have five to eight components (given name, father, grandfather, family
+names) - transcribe EVERY component, do not stop early.
 
-place_of_birth_ar: the مكان الميلاد line, in Arabic script. The card prints no Latin
-place name.
+place_of_birth_ar: the person's place of birth, in Arabic script. The card prints no
+Latin place name.
 
 id_number: the 8-digit civil number, digits only.
+
+The lower part of the card has Arabic rows. In each row the LABEL is on the
+right and its VALUE is to the LEFT of the label. Always return the VALUE.
+  مكان الميلاد  = the label "place of birth". Its value, to its left, is a
+                  country or emirate name.
+  الإسم        = the label "name". Its value, to its left, is the person's
+                  full name, usually 5-8 components.
+  المهنة       = the label "occupation". Ignore this row completely.
+Never return مكان الميلاد, الإسم or المهنة as a value - those are labels,
+not data. A person's name is never a country name, and a place of birth is
+never a person's name.
 
 date_of_birth, expiry_date: dates are PRINTED on the card as DD/MM/YYYY. You must
 convert to ISO YYYY-MM-DD, never return the card's printed format. Example: a card

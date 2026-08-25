@@ -40,6 +40,13 @@ _CARD_TYPES = {"citizen", "resident"}
 _MIN_YEAR, _MAX_YEAR = 1900, 2100
 _MAX_AGE_YEARS = 120
 
+# Arabic labels printed on the card. A model that returns one of these has
+# read the label instead of the value beside it - a field-assignment error,
+# not a reading error, and one that no format rule would otherwise catch
+# because a label IS valid Arabic text of plausible length.
+_CARD_LABELS = {"مكان الميلاد", "الإسم", "الاسم", "المهنة", "الرقم المدني",
+                "تاريخ الميلاد", "تاريخ الإنتهاء", "بطاقة مقيم", "البطاقة الشخصية"}
+
 
 def _field_value(card: CardFields, field: str) -> tuple[str | None, str | None]:
     """Map a logical field name to its (value, value_ar) pair.
@@ -117,6 +124,9 @@ def check_arabic(field: str, value_ar: str | None) -> str | None:
     if not _ARABIC_SCRIPT.search(value_ar):
         return "expected Arabic script"
 
+    if _normalise(value_ar) in _NORMALISED_CARD_LABELS:
+        return "this is a field label, not a value"
+
     # A one-character value is almost certainly a truncation or misread
     # rather than a real name or place, regardless of script.
     if len(value_ar) < 2:
@@ -167,6 +177,12 @@ def _normalise(value: str | None) -> str | None:
     if value is None:
         return None
     return " ".join(unicodedata.normalize("NFC", value).split()).casefold()
+
+
+# Normalised once, at import time, using the same comparison form as
+# cross-pass agreement - so a byte-different but visually identical label
+# (e.g. composed vs. decomposed Arabic) is still caught in check_arabic().
+_NORMALISED_CARD_LABELS = {_normalise(label) for label in _CARD_LABELS}
 
 
 def merge_passes(

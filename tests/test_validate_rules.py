@@ -121,3 +121,20 @@ def test_basic_format_date_without_separators_is_rejected():
 
 def test_iso_week_date_is_rejected():
     assert check_format("expiry_date", "2024-W01-1") is not None
+
+
+def test_arabic_label_returned_as_value_is_flagged():
+    """Observed on a real card: the model returned the label مكان الميلاد as the
+    place_of_birth value, and the place_of_birth VALUE as the name. A label is
+    valid Arabic of plausible length, so no other rule catches it."""
+    reason = check_arabic("place_of_birth", "مكان الميلاد")
+    assert reason is not None and "label" in reason
+
+
+def test_label_with_surrounding_whitespace_is_still_flagged():
+    assert check_arabic("full_name", "  الإسم  ") is not None
+
+
+def test_a_real_value_is_not_mistaken_for_a_label():
+    assert check_arabic("place_of_birth", "جمهورية مصر العربية") is None
+    assert check_arabic("full_name", "زياد نشأت عبد الحى ابو الوفا حموده") is None
