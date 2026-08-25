@@ -65,10 +65,19 @@ class FakeEngine:
 class QwenEngine:
     """Real inference. The only class in the project that needs a GPU.
 
+    Loads any Qwen2-VL-family checkpoint via AutoModelForImageTextToText,
+    which dispatches on the model's own `architectures` config entry rather
+    than a hardcoded model class. This covers both Qwen/Qwen2.5-VL-3B-Instruct
+    and derivatives such as MBZUAI/AIN (which declares
+    Qwen2VLForConditionalGeneration) with no branching in this file.
+
     T4 notes, recorded so they are not rediscovered: compute capability 7.5
-    means no bf16 (fp16 is correct here) and no FlashAttention-2, which needs
-    8.0+. SDPA is the ceiling. A 3B model in fp16 is ~6GB of the 16GB card,
-    so no quantisation, which also avoids its quality cost.
+    (sm75) means no bf16 (fp16 is correct here, regardless of what a
+    checkpoint's config.json declares) and no FlashAttention-2, which needs
+    8.0+. SDPA is the ceiling. A 3B model in fp16 is ~6GB of the 16GB card
+    and needs no quantisation; a 7B model like AIN is ~15GB in fp16, which
+    does not fit, so LOAD_IN_8BIT (~7.5GB via bitsandbytes) is required for
+    those.
     """
 
     def __init__(self, settings) -> None:
@@ -120,14 +129,25 @@ class QwenEngine:
                 "of seconds)."
             )
 
-        from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+        from transformers import AutoModelForImageTextToText, AutoProcessor
 
         dtype = getattr(torch, self._settings.TORCH_DTYPE)
-        self._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            self._settings.MODEL_ID,
-            torch_dtype=dtype,
+        load_kwargs = dict(
+            dtype=dtype,  # transformers 5.x: `torch_dtype` is deprecated in
+            # favour of `dtype` (still accepted for backwards compatibility,
+            # but emits `torch_dtype is deprecated! Use dtype instead!`).
+            # Confirmed by inspecting PreTrainedModel.from_pretrained in the
+            # installed transformers==5.15.1: it pops both `dtype` and
+            # `torch_dtype` from kwargs and prefers `dtype` when both are set.
             attn_implementation="sdpa",
             device_map=self.device,
+        )
+        if self._settings.LOAD_IN_8BIT:
+            from transformers import BitsAndBytesConfig
+
+            load_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+        self._model = AutoModelForImageTextToText.from_pretrained(
+            self._settings.MODEL_ID, **load_kwargs
         )
         self._model.eval()
         self._processor = AutoProcessor.from_pretrained(

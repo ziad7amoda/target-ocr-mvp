@@ -10,9 +10,18 @@ class Settings(BaseSettings):
         env_file=".env", extra="ignore", protected_namespaces=()
     )
 
-    MODEL_ID: str = "Qwen/Qwen2.5-VL-3B-Instruct"
+    MODEL_ID: str = "MBZUAI/AIN"
     DEVICE: str = "auto"
+    # AIN's config.json declares bfloat16, but this deliberately overrides
+    # that: the T4 (compute capability 7.5) has no bf16 support, so float16
+    # is the correct choice regardless of what the checkpoint asks for.
     TORCH_DTYPE: str = "float16"
+    # AIN is a 7B model (~15GB of weights in fp16), which does not fit
+    # unloaded on a 16GB T4 alongside CUDA overhead and activations. Loading
+    # in 8-bit (~7.5GB) is required to fit. This trades decode speed for the
+    # memory saving - set to False only on a GPU with enough headroom for
+    # fp16 (e.g. when falling back to the 3B Qwen2.5-VL model).
+    LOAD_IN_8BIT: bool = True
 
     # Revision 2026-08-24: 256 truncated long Arabic names on a real card (a
     # seven-component name hit the ceiling mid-word). Raised to 320, which is

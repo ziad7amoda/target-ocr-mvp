@@ -12,7 +12,7 @@ this paragraph's caveat with the real header values.
 | Field | Value |
 |---|---|
 | Date measured | `_not yet measured_` |
-| Model ID | `_not yet measured_` (repo default: `Qwen/Qwen2.5-VL-3B-Instruct`, see `app/config.py`) |
+| Model ID | `_not yet measured_` (repo default: `MBZUAI/AIN`, see `app/config.py`) |
 | GPU | `_not yet measured_` (e.g. "Colab T4, 16GB") |
 | Commit SHA | `_not yet measured_` (`git rev-parse HEAD` at measurement time) |
 
@@ -69,6 +69,30 @@ that assumption is false and the latency design (and the "under 5s warm"
 target in acceptance criterion 3) needs revisiting** — see the levers listed
 in spec §14 item 3 (lower `MAX_PIXELS`, move `value_ar` to a separate
 on-demand call, tighten the JSON).
+
+### `MBZUAI/AIN` (8-bit) — Arabic-name-fidelity candidate
+
+Repo default as of this revision. 7B, Qwen2-VL family, loaded via
+`AutoModelForImageTextToText` with `LOAD_IN_8BIT=True` (bitsandbytes) — see
+`app/config.py` and `app/model.py`. Not yet run on real hardware; nothing
+below is invented.
+
+| Metric | Value |
+|---|---|
+| Cold weight load | `_not yet measured_` |
+| Warm-up (first request after load) | `_not yet measured_` |
+| Warm, batch of 1 | `_not yet measured_` |
+| Peak VRAM (8-bit) | `_not yet measured_` |
+
+**Compare against the `Qwen/Qwen2.5-VL-3B-Instruct` baseline of ~10s per
+card** (warm, batch of 1 — fill in the exact baseline figure above once
+measured on the same hardware). 8-bit quantisation trades decode speed for
+the memory needed to fit a 7B model on a 16GB T4, so AIN is expected to be
+slower per card than the 3B fp16 baseline; the question this measurement
+answers is whether the Arabic-name accuracy gain is worth that cost, and
+whether it still clears the "under 5s warm" target in acceptance criterion
+3. If it does not, `notebook/run_colab.ipynb`'s `MODEL_ID` / `LOAD_IN_8BIT`
+`#@param` fields are the documented fallback back to the 3B model.
 
 ## Accuracy (from `eval/run_eval.py`)
 

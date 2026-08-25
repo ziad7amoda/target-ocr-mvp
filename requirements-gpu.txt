@@ -11,11 +11,14 @@
 #     asks for it. This is why these packages cannot live in requirements.txt:
 #     doing so silently broke the "local suite runs without torch" property.
 #   - transformers only pulls torch behind extras (`transformers[torch]`),
-#     but the Qwen2_5_VLForConditionalGeneration class app/model.py needs
-#     is unusable without it, and it is never imported outside the GPU seam.
+#     but the AutoModelForImageTextToText class app/model.py needs is
+#     unusable without it, and it is never imported outside the GPU seam.
 #
 # Every package listed here is actually imported somewhere in app/model.py.
 # Nothing is carried "just in case" - every shipped dependency has to
 # justify itself.
 transformers>=4.49
 accelerate>=0.30
+# Required only when LOAD_IN_8BIT is true (the default, needed to fit AIN's
+# 7B weights on a 16GB T4). GPU-only, like everything else in this file.
+bitsandbytes>=0.43
