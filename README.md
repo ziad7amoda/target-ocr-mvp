@@ -53,6 +53,25 @@ how to opt in anyway. If you deliberately want to run inference on CPU
 (functional, but extremely slow - think minutes per request), set
 `DEVICE=cpu` explicitly and the load will proceed.
 
+**Not every HuggingFace repo naming convention works with `MODEL_ID`.** This
+engine loads models through transformers' `AutoModelForImageTextToText`,
+which needs a HuggingFace `config.json`. `QwenEngine.load()` checks the repo
+name for known incompatible suffixes before downloading anything, and fails
+fast with a `RuntimeError` explaining the problem and the fix:
+
+| Repo suffix | Works here? | Why |
+|---|---|---|
+| *(plain, e.g. `Qwen/Qwen2.5-VL-3B-Instruct`)* | Yes | Standard transformers format |
+| `-GGUF` | No | llama.cpp's quantised format - no `config.json`, needs a llama.cpp/ollama runtime instead. Drop the suffix, e.g. `Qwen/Qwen3-VL-2B-Instruct-GGUF` -> `Qwen/Qwen3-VL-2B-Instruct` |
+| `-MLX` | No | Apple's on-device format for Apple Silicon; only runs via Apple's MLX runtime, not on a CUDA GPU. Drop the suffix |
+| `-AWQ` | Only with `autoawq` installed | transformers can load AWQ, but the package isn't in `requirements.txt`/`requirements-gpu.txt` (torch-free by design). `pip install autoawq` first |
+| `-GPTQ` | Only with `optimum` + `gptqmodel` installed | Same story: `pip install optimum gptqmodel` first |
+
+If you hit a raw `ValueError: ... Should have a \`model_type\` key in its
+config.json` despite a plain repo name, `load()` also wraps that error with
+guidance: check whether the repo is gated/private (set `HF_TOKEN`), or
+whether the installed transformers version is too old for that architecture.
+
 ## Configuration
 
 All settings are environment variables; see `app/config.py`. The ones that matter:

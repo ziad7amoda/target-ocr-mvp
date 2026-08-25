@@ -11,6 +11,8 @@ self-consistency and grounding passes ride along at almost no wall-clock
 cost (spec D5).
 """
 
+import importlib.util
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Protocol, runtime_checkable
 
@@ -60,6 +62,83 @@ class FakeEngine:
         )
         out, self.responses = self.responses[: len(requests)], self.responses[len(requests):]
         return out
+
+
+_FORMAT_SUFFIX_RE = re.compile(r"[-_](GGUF|MLX|AWQ|GPTQ)$", re.IGNORECASE)
+
+
+def _check_model_format(model_id: str) -> None:
+    """Reject repo naming conventions that cannot be loaded by this
+    transformers-based engine, before any network call (spec of D-guard).
+
+    GGUF and MLX are hard blocks: this engine loads checkpoints through
+    transformers' AutoModelForImageTextToText, which needs a HuggingFace
+    config.json to find a `model_type`. GGUF repos ship only `.gguf` files
+    (llama.cpp's format; needs llama.cpp or ollama instead) and MLX repos
+    are Apple Silicon-only (Apple's own MLX runtime) - neither can ever
+    work through this stack, so there's no point downloading first.
+
+    AWQ and GPTQ are quantisation formats transformers CAN load, but only
+    with extra packages this project's (torch-free) requirements.txt does
+    not install. Those are checked for with importlib.util.find_spec
+    (no import, so nothing pulls torch/transformers at module load time)
+    and only raised on if actually missing.
+    """
+    match = _FORMAT_SUFFIX_RE.search(model_id)
+    if not match:
+        return
+    fmt = match.group(1).upper()
+    corrected = model_id[: match.start()]
+
+    if fmt == "GGUF":
+        raise RuntimeError(
+            f"'{model_id}' is a GGUF repo (llama.cpp's quantised format, "
+            "identified by its '-GGUF' suffix). This engine loads models "
+            "through transformers' AutoModelForImageTextToText, which "
+            "requires a HuggingFace config.json - GGUF repos ship only "
+            "`.gguf` files and have no config.json, so this cannot work "
+            "here no matter what. The model was NOT downloaded. GGUF needs "
+            "a llama.cpp- or ollama-based runtime instead. The fix is "
+            "almost always to use the same repo name without the '-GGUF' "
+            f"suffix, e.g. '{model_id}' -> '{corrected}'."
+        )
+    if fmt == "MLX":
+        raise RuntimeError(
+            f"'{model_id}' is an MLX repo (Apple's on-device format for "
+            "Apple Silicon, identified by its '-MLX' suffix). This engine "
+            "loads models through transformers on a CUDA GPU; MLX "
+            "checkpoints only run through Apple's own MLX runtime on "
+            "Apple Silicon Macs, not on this stack. The model was NOT "
+            "downloaded. The fix is almost always to use the same repo "
+            f"name without the '-MLX' suffix, e.g. '{model_id}' -> "
+            f"'{corrected}'."
+        )
+    if fmt == "AWQ":
+        if importlib.util.find_spec("autoawq") is None:
+            raise RuntimeError(
+                f"'{model_id}' is an AWQ-quantised repo. transformers CAN "
+                "load AWQ checkpoints, but only with the 'autoawq' package "
+                "installed, and it is not present in this environment. The "
+                "model was NOT downloaded. Install it with `pip install "
+                "autoawq` and retry, or use the unquantised repo instead."
+            )
+        return
+    if fmt == "GPTQ":
+        missing = [
+            pkg for pkg in ("optimum", "gptqmodel")
+            if importlib.util.find_spec(pkg) is None
+        ]
+        if missing:
+            verb = "is" if len(missing) == 1 else "are"
+            raise RuntimeError(
+                f"'{model_id}' is a GPTQ-quantised repo. transformers CAN "
+                "load GPTQ checkpoints, but only with the 'optimum' and "
+                f"'gptqmodel' packages installed, and {' and '.join(missing)} "
+                f"{verb} missing from this environment. The model was NOT "
+                f"downloaded. Install with `pip install {' '.join(missing)}` "
+                "and retry, or use the unquantised repo instead."
+            )
+        return
 
 
 class QwenEngine:
@@ -129,6 +208,14 @@ class QwenEngine:
                 "of seconds)."
             )
 
+        # Second cheap check, also before any network I/O: some repo naming
+        # conventions (GGUF, MLX) can never be loaded by this transformers
+        # engine, and others (AWQ, GPTQ) need extra packages that may not be
+        # installed. Catching this here turns a several-minute download
+        # followed by an opaque "no model_type in config.json" ValueError
+        # into an immediate, actionable message.
+        _check_model_format(self._settings.MODEL_ID)
+
         from transformers import AutoModelForImageTextToText, AutoProcessor
 
         dtype = getattr(torch, self._settings.TORCH_DTYPE)
@@ -146,9 +233,29 @@ class QwenEngine:
             from transformers import BitsAndBytesConfig
 
             load_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
-        self._model = AutoModelForImageTextToText.from_pretrained(
-            self._settings.MODEL_ID, **load_kwargs
-        )
+        try:
+            self._model = AutoModelForImageTextToText.from_pretrained(
+                self._settings.MODEL_ID, **load_kwargs
+            )
+        except ValueError as exc:
+            msg = str(exc)
+            if "model_type" in msg or "Unrecognized model" in msg:
+                import transformers
+
+                raise ValueError(
+                    f"Failed to load '{self._settings.MODEL_ID}' as a "
+                    "transformers model (original error below). This "
+                    "usually means one of: (1) the repo is not in "
+                    "HuggingFace transformers format at all (e.g. a GGUF or "
+                    "MLX conversion - see the format check earlier in "
+                    "load() for those); (2) the repo is gated or private "
+                    "and needs an HF_TOKEN with access; or (3) the model "
+                    "architecture is newer than the installed transformers "
+                    f"version (installed: transformers=={transformers.__version__}), "
+                    "in which case upgrading transformers may fix it. "
+                    f"Original error: {msg}"
+                ) from exc
+            raise
         self._model.eval()
         self._processor = AutoProcessor.from_pretrained(
             self._settings.MODEL_ID,
