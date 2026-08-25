@@ -1,5 +1,13 @@
+import json
+import sys
+import urllib.error
+from unittest import mock
+
+import pytest
+
 from app.schema import Agreement, ExtractResponse, FieldResult
-from eval.run_eval import iou, score
+from eval import run_eval
+from eval.run_eval import _validate_expected, iou, main, score
 
 EXPECTED = {
     "a.jpg": {
@@ -143,3 +151,206 @@ def test_missing_ground_truth_value_ar_is_not_scored():
     should simply be skipped, not treated as a mismatch."""
     report = score({"a.jpg": _response(_all_ok())}, EXPECTED)
     assert report.silent_errors == []
+
+
+# --- --api mode -------------------------------------------------------
+
+
+class _FakeResponse:
+    """Minimal stand-in for what urllib.request.urlopen() returns."""
+
+    def __init__(self, payload: dict):
+        self._body = json.dumps(payload).encode("utf-8")
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+def _fake_extract_payload(**overrides):
+    fields = {
+        "card_type": {"value": "citizen", "status": "ok"},
+        "full_name": {"value": None, "value_ar": "زياد حموده", "status": "ok"},
+        "id_number": {"value": "12345678", "status": "ok"},
+        "date_of_birth": {"value": "1990-04-12", "status": "ok"},
+        "expiry_date": {"value": "2030-04-11", "status": "ok"},
+        "place_of_birth": {"value": None, "value_ar": "مسقط", "status": "ok"},
+    }
+    payload = {
+        "fields": fields,
+        "raw_text": "{}",
+        "agreement": {"matched": 6, "compared": 6, "total": 6},
+        "elapsed_ms": 9000,
+        "model": "remote",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _make_sample_dir(tmp_path, image_name="a.jpg"):
+    samples = tmp_path / "samples"
+    samples.mkdir()
+    (samples / image_name).write_bytes(b"\xff\xd8\xff\xe0fakejpeg")
+    expected = {
+        image_name: {
+            "fields": {
+                "card_type": "citizen", "id_number": "12345678",
+                "date_of_birth": "1990-04-12", "expiry_date": "2030-04-11",
+            },
+            "boxes": {},
+        }
+    }
+    (samples / "expected.json").write_text(json.dumps(expected), encoding="utf-8")
+    return samples
+
+
+def test_api_extract_parses_json_response_into_extract_response(tmp_path):
+    samples = _make_sample_dir(tmp_path)
+    fake = _FakeResponse(_fake_extract_payload())
+    with mock.patch.object(run_eval.urllib.request, "urlopen", return_value=fake) as urlopen:
+        result = run_eval.api_extract("http://localhost:8000", samples / "a.jpg")
+
+    assert isinstance(result, ExtractResponse)
+    assert result.fields["id_number"].value == "12345678"
+    assert result.fields["full_name"].value_ar == "زياد حموده"
+    assert result.model == "remote"
+    # Multipart POST, not a bare URL string - and hits the right endpoint.
+    request = urlopen.call_args.args[0]
+    assert request.full_url == "http://localhost:8000/api/extract"
+    assert request.get_method() == "POST"
+    assert b'name="image"' in request.data
+
+
+def test_api_extract_scores_like_a_local_response(tmp_path):
+    """A JSON response parsed via --api must feed score() exactly like a
+    local extract() call does - same downstream path, no special-casing."""
+    samples = _make_sample_dir(tmp_path)
+    fake = _FakeResponse(_fake_extract_payload())
+    with mock.patch.object(run_eval.urllib.request, "urlopen", return_value=fake):
+        result = run_eval.api_extract("http://localhost:8000", samples / "a.jpg")
+
+    expected = json.loads((samples / "expected.json").read_text(encoding="utf-8"))
+    report = score({"a.jpg": result}, expected)
+    assert report.silent_errors == []
+    assert report.per_field["id_number"]["exact"] == 1
+
+
+def test_api_extract_unreachable_server_raises_clear_message(tmp_path):
+    samples = _make_sample_dir(tmp_path)
+    with mock.patch.object(
+        run_eval.urllib.request, "urlopen",
+        side_effect=urllib.error.URLError("Connection refused"),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            run_eval.api_extract("http://localhost:8000", samples / "a.jpg")
+
+    message = str(exc_info.value)
+    assert "http://localhost:8000/api/extract" in message
+    assert "running" in message.lower()
+
+
+def test_api_health_returns_flag_from_running_server():
+    fake = _FakeResponse({"model": "x", "device": "cpu", "loaded": True, "self_consistency": False})
+    with mock.patch.object(run_eval.urllib.request, "urlopen", return_value=fake) as urlopen:
+        assert run_eval.api_health("http://localhost:8000") is False
+
+    url = urlopen.call_args.args[0]
+    assert url == "http://localhost:8000/api/health"
+
+
+def test_api_health_unreachable_returns_none_without_raising():
+    with mock.patch.object(
+        run_eval.urllib.request, "urlopen",
+        side_effect=urllib.error.URLError("Connection refused"),
+    ):
+        assert run_eval.api_health("http://localhost:8000") is None
+
+
+def test_main_api_mode_never_touches_qwen_engine(tmp_path, monkeypatch):
+    """--api mode must not import app.model / construct QwenEngine at all -
+    it is the only thing that stands between this eval run and the OOM the
+    user hit (a second model on top of an already-loaded server)."""
+    samples = _make_sample_dir(tmp_path)
+    # A None entry in sys.modules makes any `import app.model` raise
+    # ImportError - if main() tries it in --api mode, this test fails.
+    monkeypatch.setitem(sys.modules, "app.model", None)
+    monkeypatch.setitem(sys.modules, "app.extract", None)
+
+    health = _FakeResponse({"model": "x", "device": "cpu", "loaded": True, "self_consistency": True})
+    extract_resp = _FakeResponse(_fake_extract_payload())
+
+    def fake_urlopen(url_or_request, timeout=None):
+        if isinstance(url_or_request, str):
+            return health
+        return extract_resp
+
+    with mock.patch.object(run_eval.urllib.request, "urlopen", side_effect=fake_urlopen):
+        rc = main(["--api", "http://localhost:8000", "--samples", str(samples)])
+
+    assert rc == 0
+
+
+def test_main_local_mode_still_requires_app_model(tmp_path, monkeypatch):
+    """Sanity check for the test above: without --api, main() DOES need
+    app.model, so a stubbed-out module should surface as a real failure
+    rather than the test above passing for the wrong reason."""
+    samples = _make_sample_dir(tmp_path)
+    monkeypatch.setitem(sys.modules, "app.model", None)
+
+    with pytest.raises(ImportError):
+        main(["--samples", str(samples)])
+
+
+# --- expected.json structural validation -------------------------------
+
+
+def test_validate_expected_accepts_a_well_formed_file(tmp_path):
+    samples = _make_sample_dir(tmp_path)
+    expected = json.loads((samples / "expected.json").read_text(encoding="utf-8"))
+    _validate_expected(expected, samples)  # must not raise
+
+
+def test_validate_expected_rejects_unwrapped_single_card_entry(tmp_path):
+    """The exact mistake hit in the field: a single card's {fields, boxes}
+    object at the top level instead of nested under an image filename."""
+    samples = _make_sample_dir(tmp_path)
+    unwrapped = {"fields": {"card_type": "citizen"}, "boxes": {}}
+    with pytest.raises(SystemExit) as exc_info:
+        _validate_expected(unwrapped, samples)
+    message = str(exc_info.value)
+    assert "wrap it in an object keyed by the image filename" in message
+
+
+def test_validate_expected_rejects_unknown_field_key(tmp_path):
+    """Catches old-schema ground truth (nationality/sex) carried over,
+    which would otherwise silently score nothing."""
+    samples = _make_sample_dir(tmp_path)
+    expected = {
+        "a.jpg": {"fields": {"card_type": "citizen", "nationality": "OMANI"}, "boxes": {}}
+    }
+    with pytest.raises(SystemExit) as exc_info:
+        _validate_expected(expected, samples)
+    message = str(exc_info.value)
+    assert "nationality" in message
+    assert "card_type" in message  # names a valid key too
+
+
+def test_validate_expected_rejects_missing_image_file(tmp_path):
+    samples = _make_sample_dir(tmp_path)
+    expected = {"does_not_exist.jpg": {"fields": {}, "boxes": {}}}
+    with pytest.raises(SystemExit) as exc_info:
+        _validate_expected(expected, samples)
+    assert "does_not_exist.jpg" in str(exc_info.value)
+
+
+def test_validate_expected_allows_partial_ground_truth(tmp_path):
+    """Omitting fields is legitimate - a reviewer may only have typed some
+    of them in. Only an unknown key is an error."""
+    samples = _make_sample_dir(tmp_path)
+    expected = {"a.jpg": {"fields": {"card_type": "citizen"}, "boxes": {}}}
+    _validate_expected(expected, samples)  # must not raise
