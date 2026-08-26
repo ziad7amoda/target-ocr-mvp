@@ -22,3 +22,9 @@ accelerate>=0.30
 # Required only when LOAD_IN_8BIT is true (the default, needed to fit AIN's
 # 7B weights on a 16GB T4). GPU-only, like everything else in this file.
 bitsandbytes>=0.43
+# Required for LoRA-adapter models (several Arabic-OCR fine-tunes on the Hub,
+# e.g. NAMAA-Space/Qari-OCR-0.4.0-VL-4B-Instruct, ship as adapters rather than
+# full checkpoints). GPU-only, like everything else in this file. This has
+# worked on Colab so far purely because Colab preinstalls it - on a clean
+# server, loading an adapter model without it fails with a confusing error.
+peft>=0.11
