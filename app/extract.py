@@ -113,12 +113,23 @@ Omit any field you cannot locate."""
 TRANSCRIBE_PROMPT = "Transcribe all printed text on this card, line by line, exactly as it appears."
 
 
-def _all_missing(raw_text: str, model_id: str, elapsed_ms: int) -> ExtractResponse:
+def _all_missing(
+    raw_text: str, model_id: str, elapsed_ms: int, reason: str | None = None
+) -> ExtractResponse:
     """Spec §4.3: after a second parse failure, return nothing rather than a
     guess. A confidently wrong ID number is this product's worst failure
-    mode - far more damaging than a blank field."""
+    mode - far more damaging than a blank field.
+
+    `reason` carries the parse error onto every field. Without it this path
+    is visually identical to a model that looked at the card and read
+    nothing - the two have completely different fixes, and telling them
+    apart previously meant opening the collapsed "Model output" panel and
+    knowing what to look for.
+    """
     return ExtractResponse(
-        fields={f: FieldResult(value=None, status="missing") for f in FIELD_NAMES},
+        fields={
+            f: FieldResult(value=None, status="missing", reason=reason) for f in FIELD_NAMES
+        },
         raw_text=raw_text,
         agreement=Agreement(matched=0, compared=0, total=len(FIELD_NAMES)),
         elapsed_ms=elapsed_ms,
@@ -128,13 +139,14 @@ def _all_missing(raw_text: str, model_id: str, elapsed_ms: int) -> ExtractRespon
 
 def _parse_with_retry(
     text: str, image: Image.Image, engine, settings
-) -> tuple[CardFields | None, str]:
+) -> tuple[CardFields | None, str, str | None]:
     """Parse, and on failure retry ONCE with the error fed back.
 
-    Returns (card, raw_text). card is None when both attempts failed.
+    Returns (card, raw_text, error). card is None when both attempts failed,
+    and `error` then describes the second failure.
     """
     try:
-        return parse_card_json(text), text
+        return parse_card_json(text), text, None
     except ParseError as first:
         retry_prompt = (
             f"{_field_prompt(settings)}\n\nYour previous reply could not be parsed: {first}. "
@@ -142,9 +154,9 @@ def _parse_with_retry(
         )
         retry = engine.generate([GenerationRequest(image=image, prompt=retry_prompt)])[0]
         try:
-            return parse_card_json(retry), retry
-        except ParseError:
-            return None, retry
+            return parse_card_json(retry), retry, None
+        except ParseError as second:
+            return None, retry, f"could not parse model output: {second}"
 
 
 def extract(image: Image.Image, engine, settings, processed_size=None) -> ExtractResponse:
@@ -171,9 +183,14 @@ def extract(image: Image.Image, engine, settings, processed_size=None) -> Extrac
     secondary_text = replies[1] if settings.SELF_CONSISTENCY else None
     grounding_text = replies[-1] if grounding_requested else None
 
-    primary, primary_raw = _parse_with_retry(primary_text, image, engine, settings)
+    primary, primary_raw, primary_error = _parse_with_retry(primary_text, image, engine, settings)
     if primary is None:
-        return _all_missing(primary_raw, engine.model_id, int((time.perf_counter() - t0) * 1000))
+        return _all_missing(
+            primary_raw,
+            engine.model_id,
+            int((time.perf_counter() - t0) * 1000),
+            reason=primary_error,
+        )
 
     # A failed or disabled secondary is not fatal: merge_passes downgrades
     # every field to `review` rather than claiming an unverified `ok`.
@@ -185,7 +202,7 @@ def extract(image: Image.Image, engine, settings, processed_size=None) -> Extrac
         # then agree by construction, rule 2 ("passes disagreed") - the only
         # check that catches a well-formed hallucination - could never fire,
         # and the field would be served `ok` unchecked.
-        secondary, _ = _parse_with_retry(secondary_text, contrast_image, engine, settings)
+        secondary, _, _ = _parse_with_retry(secondary_text, contrast_image, engine, settings)
 
     fields, agreement = merge_passes(primary, secondary)
 

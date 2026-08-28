@@ -244,3 +244,54 @@ def test_unknown_prompt_style_raises_a_clear_error():
     engine = FakeEngine(_replies())
     with pytest.raises(ValueError, match="PROMPT_STYLE"):
         extract(_img(), engine, Settings(PROMPT_STYLE="verbose"))
+
+
+def test_renamed_keys_do_not_wipe_out_the_whole_card():
+    """The reported symptom: every field `missing` on every model except the
+    default one.
+
+    A model that answers with its own key spellings - `full_name` for
+    `full_name_ar`, plus a `nationality` nobody asked for - used to fail
+    schema validation, fail it again on retry, and land in _all_missing().
+    Six `missing` fields is indistinguishable, in the UI, from a model that
+    read nothing; it had in fact read everything.
+    """
+    reply = json.dumps(
+        {
+            "card_type": "resident",
+            "full_name": GOOD["full_name_ar"],
+            "id_number": "70011864",
+            "date_of_birth": "2002-09-29",
+            "expiry_date": "2027-01-25",
+            "place_of_birth": GOOD["place_of_birth_ar"],
+            "nationality": "Oman",
+        }
+    )
+    engine = FakeEngine([reply, reply])
+    res = extract(_img(), engine, Settings())
+
+    assert [f.status for f in res.fields.values()].count("missing") == 0
+    assert res.fields["full_name"].value_ar == GOOD["full_name_ar"]
+    assert res.fields["place_of_birth"].value_ar == GOOD["place_of_birth_ar"]
+    assert res.fields["id_number"].value == "70011864"
+    # One generate() call: the retry path is not entered at all any more.
+    assert len(engine.calls) == 1
+
+
+def test_unparseable_output_still_reports_every_field_missing():
+    """The tolerance must not swallow genuine failure. Prose is still prose."""
+    # Four replies: the two-sequence batch, plus one retry per pass.
+    engine = FakeEngine(["I cannot read this card."] * 4)
+    res = extract(_img(), engine, Settings())
+    assert all(f.status == "missing" for f in res.fields.values())
+
+
+def test_a_parse_failure_says_so_on_every_field():
+    """`missing` because we could not parse the reply, and `missing` because
+    the model could not read the card, look identical in the UI and have
+    nothing in common as problems. The reason distinguishes them."""
+    engine = FakeEngine(["I cannot read this card."] * 4)
+    res = extract(_img(), engine, Settings())
+    reasons = {f.reason for f in res.fields.values()}
+    assert len(reasons) == 1
+    assert "could not parse model output" in reasons.pop()

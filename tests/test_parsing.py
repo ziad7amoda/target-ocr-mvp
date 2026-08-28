@@ -53,9 +53,16 @@ def test_raises_on_no_json_at_all():
         parse_card_json("I cannot read this card.")
 
 
-def test_raises_on_unknown_key():
-    with pytest.raises(ParseError):
-        parse_card_json('{"full_name_ar": "X", "eye_colour": "brown"}')
+def test_an_unknown_key_no_longer_fails_the_whole_card():
+    """Reversal of the original contract, deliberately.
+
+    Rejecting the object because of one unrecognised key threw away five
+    good values to punish a sixth nobody asked for, and that is what made
+    every non-default model report six `missing` fields. The unknown key is
+    dropped; the recognised ones survive. Output with NOTHING recognisable
+    in it still raises - see test_raises_when_no_key_resembles_a_card_field.
+    """
+    assert parse_card_json('{"full_name_ar": "X", "eye_colour": "brown"}').full_name_ar == "X"
 
 
 def test_parses_boxes():
@@ -100,3 +107,80 @@ def test_empty_and_whitespace_values_normalise_to_none():
     card = parse_card_json('{"full_name_ar": "", "id_number": "   "}')
     assert card.full_name_ar is None
     assert card.id_number is None
+
+
+# --- Key tolerance -------------------------------------------------------
+#
+# Every model other than Qwen2.5-VL-3B was returning `missing` for every
+# field. Root cause: CardFields sets extra="forbid", so ONE unrequested key
+# ("nationality") or ONE renamed key ("full_name" instead of "full_name_ar")
+# raised ValidationError, the retry produced the same shape, and extract()
+# fell through to _all_missing(). The six values the model DID read were
+# discarded because of a key the prompt never asked for.
+
+
+def test_ignores_an_extra_key_the_prompt_never_asked_for():
+    """Dropping a key we do not want must not discard the ones we do.
+
+    `nationality` and `sex` were removed in the R1 revision precisely
+    because they are not printed on the card; a model volunteering them is
+    the expected case, not a parse failure."""
+    card = parse_card_json(
+        '{"card_type": "citizen", "full_name_ar": "جون سميث", '
+        '"id_number": "12345678", "nationality": "Oman", "sex": "M"}'
+    )
+    assert card.full_name_ar == "جون سميث"
+    assert card.id_number == "12345678"
+
+
+def test_accepts_the_unsuffixed_key_for_an_arabic_only_field():
+    """`full_name_ar`/`place_of_birth_ar` carry a suffix the field's own
+    name does not. Models routinely emit the plain name instead."""
+    card = parse_card_json(
+        '{"full_name": "جون سميث", "place_of_birth": "مسقط"}'
+    )
+    assert card.full_name_ar == "جون سميث"
+    assert card.place_of_birth_ar == "مسقط"
+
+
+def test_accepts_common_key_spellings():
+    card = parse_card_json(
+        '{"Card Type": "citizen", "fullName": "جون سميث", '
+        '"civil_number": "12345678", "DOB": "1990-04-12", '
+        '"expiry": "2030-04-11", "birthPlace": "مسقط"}'
+    )
+    assert card.card_type == "citizen"
+    assert card.full_name_ar == "جون سميث"
+    assert card.id_number == "12345678"
+    assert card.date_of_birth == "1990-04-12"
+    assert card.expiry_date == "2030-04-11"
+    assert card.place_of_birth_ar == "مسقط"
+
+
+def test_canonical_key_wins_over_an_alias():
+    card = parse_card_json('{"full_name_ar": "جون", "full_name": "JOHN SMITH"}')
+    assert card.full_name_ar == "جون"
+
+
+def test_conflicting_aliases_yield_null_rather_than_a_guess():
+    """Two aliases, two different values, no way to tell which is the card's.
+    Spec §4.3: return nothing rather than pick one."""
+    card = parse_card_json('{"full_name": "جون", "name": "أحمد"}')
+    assert card.full_name_ar is None
+
+
+def test_unwraps_a_single_key_wrapper_object():
+    card = parse_card_json('{"fields": {"id_number": "12345678"}}')
+    assert card.id_number == "12345678"
+
+
+def test_unwraps_a_single_element_list():
+    card = parse_card_json('[{"id_number": "12345678"}]')
+    assert card.id_number == "12345678"
+
+
+def test_raises_when_no_key_resembles_a_card_field():
+    """Tolerance is not credulity: output with nothing recognisable in it is
+    still a parse failure, not a card with six null fields."""
+    with pytest.raises(ParseError):
+        parse_card_json('{"eye_colour": "brown", "height_cm": 180}')
