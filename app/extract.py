@@ -90,9 +90,38 @@ Dates are printed as DD/MM/YYYY; return them as YYYY-MM-DD.
 Use null for any value you cannot read.
 Return only the JSON object."""
 
+# Third style, added from a measurement rather than a guess. Qari-OCR
+# returned null for full_name_ar and place_of_birth_ar under the natural
+# prompt; asked to transcribe the SAME image in the SAME session via
+# /api/transcribe, it returned the full six-component Arabic name correctly:
+#
+#     زياد نشأت عبد الحي أبو الوفا حمودة
+#
+# So the model can read the Arabic at the resolution it is already being
+# given - 1280 vision tokens is not the constraint, and the null was never a
+# legibility judgement. What changed between the two runs is only the framing
+# of the task: "transcribe this document" is what Qari was fine-tuned on,
+# "extract these fields" is not.
+#
+# This prompt therefore asks for transcription and uses JSON purely as the
+# output shape. It deliberately does NOT name the Arabic labels (الإسم,
+# مكان الميلاد) the way FIELD_PROMPT_STRICT does: naming them is what caused
+# AIN to return the label instead of the value beside it.
+FIELD_PROMPT_TRANSCRIBE = """Transcribe this Omani ID card into a JSON object with exactly these keys:
+card_type, full_name_ar, id_number, date_of_birth, expiry_date, place_of_birth_ar
+
+Copy the Arabic exactly as it is printed on the card, including every
+component of the person's name.
+card_type is "citizen" or "resident".
+id_number is the civil number, digits only.
+Dates are printed as DD/MM/YYYY; write them as YYYY-MM-DD.
+Use null for anything not printed on the card.
+Return only the JSON object."""
+
 FIELD_PROMPTS = {
     "strict": FIELD_PROMPT_STRICT,
     "natural": FIELD_PROMPT_NATURAL,
+    "transcribe": FIELD_PROMPT_TRANSCRIBE,
 }
 
 

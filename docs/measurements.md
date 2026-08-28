@@ -145,3 +145,58 @@ too. Report this rather than working around it.
 
 **Summary: 2 of 8 verified locally, 1 partially verified locally (real-data
 confirmation still pending), 5 pending hardware.**
+
+---
+
+## Findings from real runs
+
+Unlike the template slots above, everything in this section was actually
+observed. Each entry names the card, the model, and the commit-era settings
+it was produced under.
+
+### 2026-08-29 — Qari-OCR declines Arabic under extraction, reads it under transcription
+
+**Model:** `NAMAA-Space/Qari-OCR-0.4.0-VL-4B-Instruct`, 8-bit, T4
+**Card:** resident card (the one in the revision spec)
+**Settings:** `PROMPT_STYLE=natural`, `MAX_PIXELS=1280*28*28`, `SELF_CONSISTENCY=true`
+
+Extraction returned, verbatim:
+
+```json
+{"card_type": "resident", "full_name_ar": null, "id_number": "70011864",
+ "date_of_birth": "2002-09-29", "expiry_date": "2027-01-25",
+ "place_of_birth_ar": null}
+```
+
+Four Latin fields correct, agreement 4/4, 10.2s. Both Arabic fields null —
+emitted by the model itself, confirmed in `raw_text`, not lost in parsing.
+
+`/api/transcribe`, **same image, same session**, returned the name in full:
+
+```
+... مكان الميلاد الإسم زياد نشأت عبد الحي أبو الوفا حمودة المهنة ...
+```
+
+All six components, correct.
+
+**What this establishes:**
+
+1. **Resolution is not the constraint.** 1280 vision tokens is enough for
+   this model to read this card's Arabic. The hypothesis that the name line
+   is too small after downscaling is ruled out for Qari at this card size.
+2. **The null was not a legibility judgement.** The same pixels produced a
+   correct reading seconds earlier. Task framing was the only variable.
+3. **The model comparison so far has been unfair.** Every model was scored
+   on "does it do JSON field extraction with these keys", which is not the
+   same question as "does it read Arabic". On the evidence here Qari reads
+   this name *better* than Qwen2.5-VL-3B, which truncated a seven-component
+   name and misread عهود as عهد — and Qari was scored as the worst of them.
+
+**What it does not establish:** that `PROMPT_STYLE=transcribe` fixes it.
+That prompt was written from this finding but has not itself been run.
+
+**Also visible in the transcription:** the Latin/numeric values are absent
+from the transcript (the civil number appears as the garbled
+`7E4001C668032A7C`), while the Arabic labels and the name are correct. The
+two modes are good at opposite halves of the card, which is worth
+remembering if a two-stage design is ever considered.

@@ -4,7 +4,12 @@ import pytest
 from PIL import Image
 
 from app.config import Settings
-from app.extract import FIELD_PROMPT_NATURAL, FIELD_PROMPT_STRICT, extract
+from app.extract import (
+    FIELD_PROMPT_NATURAL,
+    FIELD_PROMPT_STRICT,
+    FIELD_PROMPT_TRANSCRIBE,
+    extract,
+)
 from app.model import FakeEngine
 
 # Realistic fixture from the resident card in
@@ -219,7 +224,11 @@ def test_natural_prompt_drops_the_label_exclusion_list():
 
 @pytest.mark.parametrize(
     "style,expected_prompt",
-    [("strict", FIELD_PROMPT_STRICT), ("natural", FIELD_PROMPT_NATURAL)],
+    [
+        ("strict", FIELD_PROMPT_STRICT),
+        ("natural", FIELD_PROMPT_NATURAL),
+        ("transcribe", FIELD_PROMPT_TRANSCRIBE),
+    ],
 )
 def test_extract_sends_the_prompt_matching_prompt_style(style, expected_prompt):
     engine = FakeEngine(_replies())
@@ -231,7 +240,11 @@ def test_extract_sends_the_prompt_matching_prompt_style(style, expected_prompt):
 
 @pytest.mark.parametrize(
     "style,expected_prompt",
-    [("strict", FIELD_PROMPT_STRICT), ("natural", FIELD_PROMPT_NATURAL)],
+    [
+        ("strict", FIELD_PROMPT_STRICT),
+        ("natural", FIELD_PROMPT_NATURAL),
+        ("transcribe", FIELD_PROMPT_TRANSCRIBE),
+    ],
 )
 def test_retry_path_uses_the_prompt_matching_prompt_style(style, expected_prompt):
     engine = FakeEngine(["not json", json.dumps(GOOD), json.dumps(GOOD)])
@@ -295,3 +308,50 @@ def test_a_parse_failure_says_so_on_every_field():
     reasons = {f.reason for f in res.fields.values()}
     assert len(reasons) == 1
     assert "could not parse model output" in reasons.pop()
+
+
+# --- transcribe prompt style -----------------------------------------------
+# Measured, not guessed: Qari-OCR-0.4.0-VL-4B returned null for both Arabic
+# fields under the natural prompt, then transcribed the same image in the
+# same session correctly via /api/transcribe. The model can read the Arabic
+# at the resolution it already gets; only the framing of the task differed.
+
+
+def test_transcribe_prompt_frames_the_task_as_transcription():
+    """The whole point of this style. "Read ... and return" is what Qari
+    declined; transcription is what it was fine-tuned to do."""
+    assert FIELD_PROMPT_TRANSCRIBE.lower().startswith("transcribe")
+
+
+def test_transcribe_prompt_asks_for_the_arabic_verbatim():
+    assert "exactly as it is printed" in FIELD_PROMPT_TRANSCRIBE
+    assert "every" in FIELD_PROMPT_TRANSCRIBE
+    assert "component of the person's name" in FIELD_PROMPT_TRANSCRIBE
+
+
+def test_transcribe_prompt_keeps_the_date_conversion():
+    """Factual about the card, not model coaching - a card printed 11/08
+    otherwise comes back as 8 November."""
+    assert "DD/MM/YYYY" in FIELD_PROMPT_TRANSCRIBE
+    assert "YYYY-MM-DD" in FIELD_PROMPT_TRANSCRIBE
+
+
+def test_transcribe_prompt_does_not_name_the_arabic_labels():
+    """Naming الإسم / مكان الميلاد in FIELD_PROMPT_STRICT is what made AIN
+    return the label instead of the value printed beside it."""
+    assert "مكان الميلاد" not in FIELD_PROMPT_TRANSCRIBE
+    assert "الإسم" not in FIELD_PROMPT_TRANSCRIBE
+
+
+def test_all_prompt_styles_request_the_same_six_keys():
+    """A style that renamed or dropped a key would silently change the
+    output contract rather than just the phrasing."""
+    from app.extract import FIELD_PROMPTS
+
+    keys = [
+        "card_type", "full_name_ar", "id_number",
+        "date_of_birth", "expiry_date", "place_of_birth_ar",
+    ]
+    for style, prompt in FIELD_PROMPTS.items():
+        for key in keys:
+            assert key in prompt, f"{style} prompt is missing {key}"

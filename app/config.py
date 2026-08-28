@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     # comparing models. Neither style is uniformly better - which to use is
     # a per-model choice, made from evidence on real cards, not a default
     # to trust blindly.
+    #
+    # Revision 2026-08-29: "transcribe" is a third style, added from a
+    # measurement. Under "natural", Qari returned null for both Arabic
+    # fields; asked to transcribe the same image in the same session it
+    # returned the full six-component Arabic name correctly. The model can
+    # read the Arabic at the resolution it already gets - the null was task
+    # framing, not legibility - so "transcribe" asks for transcription and
+    # uses JSON only as the output shape.
     PROMPT_STYLE: str = "natural"
 
     SELF_CONSISTENCY: bool = True
