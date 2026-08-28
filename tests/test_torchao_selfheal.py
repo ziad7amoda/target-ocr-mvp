@@ -10,6 +10,7 @@ from scripts.torchao_selfheal import (
     get_installed_version,
     is_version_below,
     parse_version_prefix,
+    uninstall_commands,
 )
 
 
@@ -108,3 +109,40 @@ class TestGetInstalledVersion:
 )
 def test_end_to_end_decision_table(installed, expected_action):
     assert decide_action(installed) == expected_action
+
+
+# --- uninstall_commands --------------------------------------------------
+#
+# The first version of this self-heal trusted `pip uninstall`'s return code
+# and printed "torchao removed" on exit 0. pip exits 0 when the package is
+# not installed in the environment that pip manages, so on a Colab kernel
+# whose sys.executable does not own /usr/local/lib/.../dist-packages the
+# cell reported success, and the model load died three minutes later with
+# the exact ImportError the self-heal exists to prevent.
+
+
+def test_offers_a_fallback_to_the_pip_on_path():
+    """sys.executable's pip and the `pip` on PATH are not always the same
+    environment on Colab. Trying only the first one is how a removal that
+    never happened gets reported as a success."""
+    commands = uninstall_commands("/usr/bin/python3")
+    assert commands[0][:3] == ["/usr/bin/python3", "-m", "pip"]
+    assert commands[1][0] == "pip"
+
+
+def test_every_command_is_a_non_interactive_torchao_uninstall():
+    for command in uninstall_commands("/usr/bin/python3"):
+        assert "uninstall" in command
+        assert "-y" in command, "a prompt would hang the notebook cell"
+        assert command[-1] == "torchao"
+
+
+def test_get_installed_version_reports_absent_packages_as_none():
+    assert get_installed_version("a-package-that-is-not-installed-anywhere") is None
+
+
+def test_get_installed_version_finds_a_package_that_is_installed():
+    """Guards the None-means-absent contract against a silently broken
+    lookup, which would make the self-heal a no-op that always claims
+    success."""
+    assert get_installed_version("pytest") is not None

@@ -72,13 +72,44 @@ def get_installed_version(package: str = "torchao") -> str | None:
 
     Uses importlib.metadata only - never imports the package itself, so this
     is safe to call even for packages (like torchao) we don't want loaded.
+
+    Caches are invalidated first. importlib.metadata memoises its filesystem
+    scan, and this function is called again immediately after a `pip
+    uninstall` in the same process to check whether the uninstall actually
+    took effect - a stale cache there would report the package as still
+    present and send the user chasing a problem that no longer exists.
     """
+    import importlib
     from importlib.metadata import PackageNotFoundError, version
 
+    importlib.invalidate_caches()
     try:
         return version(package)
     except PackageNotFoundError:
         return None
+
+
+def uninstall_commands(executable: str) -> list[list[str]]:
+    """Commands to try, in order, to remove `torchao`.
+
+    Two of them, because `pip uninstall` exits 0 when the package is not
+    installed in the environment that particular pip manages:
+
+        $ pip uninstall -y torchao
+        WARNING: Skipping torchao as it is not installed.
+        $ echo $?
+        0
+
+    A zero exit therefore proves nothing, and the caller MUST re-check with
+    get_installed_version() rather than trusting the return code. On Colab
+    the kernel's sys.executable and the `pip` on PATH do not reliably
+    resolve to the same site-packages, which is precisely the case where the
+    first command reports success and removes nothing.
+    """
+    return [
+        [executable, "-m", "pip", "uninstall", "-y", "torchao"],
+        ["pip", "uninstall", "-y", "torchao"],
+    ]
 
 
 def decide_action(installed_version: str | None) -> str:
