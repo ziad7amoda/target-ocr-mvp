@@ -28,8 +28,16 @@ from app.boxes import filter_boxes
 from app.imaging import contrast_normalise
 from app.model import GenerationRequest
 from app.parsing import ParseError, parse_boxes, parse_card_json
-from app.schema import FIELD_NAMES, Agreement, CardFields, ExtractResponse, FieldResult
-from app.validate import merge_passes
+from app.schema import (
+    ARABIC_FIELDS,
+    FIELD_NAMES,
+    Agreement,
+    CardFields,
+    ExtractResponse,
+    FieldResult,
+)
+from app.transcript import recover_arabic_fields
+from app.validate import check_arabic, merge_passes
 
 FIELD_PROMPT_STRICT = """You are reading an Omani national ID card. Return ONLY a JSON object, no markdown fences, no commentary.
 
@@ -193,6 +201,52 @@ def _parse_with_retry(
             return None, retry, f"could not parse model output: {second}"
 
 
+def _recover_missing_arabic(fields: dict[str, FieldResult], image: Image.Image, engine) -> None:
+    """Fill Arabic fields extraction returned nothing for, from a transcript.
+
+    Only reached when at least one of them is `missing`, so a model that
+    reads the card properly never pays for this - it is a second inference,
+    and the most expensive thing in the request when it happens.
+
+    Three properties make this safe enough to do automatically, and they are
+    the reason this is not simply "ask twice and take whatever comes back":
+
+      * It only ever writes to a field that is already `missing`. Nothing
+        the model actually read can be overwritten by a transcript.
+      * The result is `review`, never `ok`. There is no second pass to
+        compare a recovered value against, so the agreement check that
+        catches hallucination cannot have run on it, and it would be
+        dishonest to present it as verified. The reason says so.
+      * The value must still pass check_arabic() - the same script, label
+        and length rules every other Arabic value passes. A capture that
+        picked up a printed label instead of a value is rejected here.
+
+    Failure is silent by design: the field simply stays `missing`, which is
+    what it already was. A recovery attempt must never be able to turn a
+    partial result into no result.
+    """
+    wanted = [f for f in FIELD_NAMES if f in ARABIC_FIELDS and fields[f].status == "missing"]
+    if not wanted:
+        return
+
+    try:
+        transcript = engine.generate([GenerationRequest(image=image, prompt=TRANSCRIBE_PROMPT)])[0]
+        recovered = recover_arabic_fields(transcript)
+    except Exception:
+        return
+
+    for field in wanted:
+        value = recovered.get(field)
+        if value is None or check_arabic(field, value) is not None:
+            continue
+        fields[field] = FieldResult(
+            value=None,
+            value_ar=value,
+            status="review",
+            reason="recovered from transcription, not cross-checked",
+        )
+
+
 def extract(image: Image.Image, engine, settings, processed_size=None) -> ExtractResponse:
     t0 = time.perf_counter()
 
@@ -240,6 +294,9 @@ def extract(image: Image.Image, engine, settings, processed_size=None) -> Extrac
         secondary, _, _ = _parse_with_retry(secondary_text, contrast_image, engine, settings)
 
     fields, agreement = merge_passes(primary, secondary)
+
+    if settings.RECOVER_ARABIC_FROM_TRANSCRIPT:
+        _recover_missing_arabic(fields, image, engine)
 
     if grounding_requested and grounding_text is not None:
         boxes = filter_boxes(

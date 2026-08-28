@@ -373,3 +373,89 @@ def test_a_parse_failure_still_names_the_prompt_style():
     engine = FakeEngine(["not json"] * 4)
     res = extract(_img(), engine, Settings(PROMPT_STYLE="natural"))
     assert res.prompt_style == "natural"
+
+
+# --- recovering Arabic from a transcription --------------------------------
+# Measured (docs/measurements.md, 2026-08-29): Qari-OCR returned null for
+# both Arabic fields under every prompt style tried, and transcribed the
+# same image correctly in the same session. See app/transcript.py.
+
+NO_ARABIC = {**GOOD, "full_name_ar": None, "place_of_birth_ar": None}
+TRANSCRIPT = (
+    "سلطنة عُمان SULTANATE OF OMAN RESIDENT CARD الرقم المدني "
+    "مكان الميلاد جمهورية مصر العربية الإسم "
+    "زياد نشأت عبد الحي أبو الوفا حمودة المهنة إتحاق بالأقارب"
+)
+
+
+def test_recovers_arabic_fields_extraction_returned_null_for():
+    reply = json.dumps(NO_ARABIC)
+    engine = FakeEngine([reply, reply, TRANSCRIPT])
+    res = extract(_img(), engine, Settings())
+
+    assert res.fields["full_name"].value_ar == "زياد نشأت عبد الحي أبو الوفا حمودة"
+    assert res.fields["place_of_birth"].value_ar == "جمهورية مصر العربية"
+
+
+def test_a_recovered_value_is_review_and_never_ok():
+    """It has no second pass to be compared against, so the agreement check
+    that catches hallucination cannot have run on it. Presenting it as `ok`
+    would be exactly the silent error this product exists to prevent."""
+    reply = json.dumps(NO_ARABIC)
+    res = extract(_img(), FakeEngine([reply, reply, TRANSCRIPT]), Settings())
+
+    for field in ("full_name", "place_of_birth"):
+        assert res.fields[field].status == "review"
+        assert "transcription" in res.fields[field].reason
+
+
+def test_recovery_costs_nothing_when_the_model_read_the_arabic():
+    """A model that works must not pay for a second inference. This is the
+    whole reason recovery is conditional rather than always-on."""
+    engine = FakeEngine(_replies())
+    extract(_img(), engine, Settings())
+    assert len(engine.calls) == 1
+
+
+def test_recovery_can_be_turned_off():
+    reply = json.dumps(NO_ARABIC)
+    engine = FakeEngine([reply, reply])
+    res = extract(_img(), engine, Settings(RECOVER_ARABIC_FROM_TRANSCRIPT=False))
+    assert res.fields["full_name"].status == "missing"
+    assert len(engine.calls) == 1
+
+
+def test_a_recovered_value_still_has_to_pass_the_arabic_rules():
+    """The capture is bounded by printed labels, so it can pick up a label
+    instead of a value. check_arabic() rejects that, and the field stays
+    `missing` - which is what it already was."""
+    reply = json.dumps(NO_ARABIC)
+    labels_only = "مكان الميلاد الإسم المهنة"
+    res = extract(_img(), FakeEngine([reply, reply, labels_only]), Settings())
+    assert res.fields["full_name"].status == "missing"
+    assert res.fields["place_of_birth"].status == "missing"
+
+
+def test_recovery_never_overwrites_a_value_the_model_actually_read():
+    """Only `missing` fields are eligible. A transcript must not be able to
+    replace something extraction read successfully."""
+    half = {**GOOD, "place_of_birth_ar": None}
+    reply = json.dumps(half)
+    res = extract(_img(), FakeEngine([reply, reply, TRANSCRIPT]), Settings())
+    assert res.fields["full_name"].value_ar == GOOD["full_name_ar"]
+    assert res.fields["full_name"].status == "ok"
+
+
+def test_a_failed_transcription_leaves_the_extraction_intact():
+    """Recovery is an improvement on `missing`. It must never be able to
+    turn a partial result into no result."""
+    reply = json.dumps(NO_ARABIC)
+
+    def _engine(requests):
+        if "Transcribe all printed text" in requests[0].prompt:
+            raise RuntimeError("CUDA out of memory")
+        return [reply, reply]
+
+    res = extract(_img(), FakeEngine(_engine), Settings())
+    assert res.fields["id_number"].value == "70011864"
+    assert res.fields["full_name"].status == "missing"

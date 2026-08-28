@@ -53,6 +53,16 @@ class Settings(BaseSettings):
     # uses JSON only as the output shape.
     PROMPT_STYLE: str = "natural"
 
+    # Revision 2026-08-29: when extraction returns null for an Arabic
+    # field, re-read it from a transcription pass. Measured on a real
+    # card: Qari-OCR returned null for both Arabic fields under every
+    # prompt style tried, and transcribed the same image correctly in the
+    # same session. See app/transcript.py for what bounds the risk.
+    #
+    # Costs a second inference, but only on the cards that need it - a
+    # model that reads the Arabic never triggers it and pays nothing.
+    RECOVER_ARABIC_FROM_TRANSCRIPT: bool = True
+
     SELF_CONSISTENCY: bool = True
     # Revision 2026-08-24: grounding returned no usable boxes in the live run
     # against real cards. Per the design's own rule (D4), an overlay that
