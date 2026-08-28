@@ -143,7 +143,11 @@ TRANSCRIBE_PROMPT = "Transcribe all printed text on this card, line by line, exa
 
 
 def _all_missing(
-    raw_text: str, model_id: str, elapsed_ms: int, reason: str | None = None
+    raw_text: str,
+    model_id: str,
+    elapsed_ms: int,
+    reason: str | None = None,
+    prompt_style: str | None = None,
 ) -> ExtractResponse:
     """Spec §4.3: after a second parse failure, return nothing rather than a
     guess. A confidently wrong ID number is this product's worst failure
@@ -163,6 +167,7 @@ def _all_missing(
         agreement=Agreement(matched=0, compared=0, total=len(FIELD_NAMES)),
         elapsed_ms=elapsed_ms,
         model=model_id,
+        prompt_style=prompt_style,
     )
 
 
@@ -219,6 +224,7 @@ def extract(image: Image.Image, engine, settings, processed_size=None) -> Extrac
             engine.model_id,
             int((time.perf_counter() - t0) * 1000),
             reason=primary_error,
+            prompt_style=settings.PROMPT_STYLE,
         )
 
     # A failed or disabled secondary is not fatal: merge_passes downgrades
@@ -248,6 +254,7 @@ def extract(image: Image.Image, engine, settings, processed_size=None) -> Extrac
         agreement=agreement,
         elapsed_ms=int((time.perf_counter() - t0) * 1000),
         model=engine.model_id,
+        prompt_style=settings.PROMPT_STYLE,
     )
 
 

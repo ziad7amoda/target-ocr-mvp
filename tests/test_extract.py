@@ -355,3 +355,21 @@ def test_all_prompt_styles_request_the_same_six_keys():
     for style, prompt in FIELD_PROMPTS.items():
         for key in keys:
             assert key in prompt, f"{style} prompt is missing {key}"
+
+
+def test_response_names_the_prompt_style_that_produced_it():
+    """The response named the model but not the prompt, and the prompt has
+    changed the outcome more than the model has. Two runs of the same model
+    - one returning both Arabic fields, one returning null for both - were
+    indistinguishable in the payload, which is how a whole debugging round
+    went by without anyone able to confirm which prompt had actually run."""
+    engine = FakeEngine(_replies())
+    res = extract(_img(), engine, Settings(PROMPT_STYLE="transcribe"))
+    assert res.prompt_style == "transcribe"
+
+
+def test_a_parse_failure_still_names_the_prompt_style():
+    """The failure path is exactly where knowing the prompt matters most."""
+    engine = FakeEngine(["not json"] * 4)
+    res = extract(_img(), engine, Settings(PROMPT_STYLE="natural"))
+    assert res.prompt_style == "natural"

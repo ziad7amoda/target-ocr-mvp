@@ -19,7 +19,7 @@ from PIL import Image, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 
 from app.config import Settings, get_settings
-from app.extract import extract, transcribe
+from app.extract import _field_prompt, extract, transcribe
 from app.schema import ExtractResponse, HealthResponse, TranscribeResponse
 
 logger = logging.getLogger("app")
@@ -59,6 +59,11 @@ def create_app(engine=None, settings: Settings | None = None) -> FastAPI:
     # pointlessly across calls.
     if not any(isinstance(f, ValueLeakFilter) for f in logger.filters):
         logger.addFilter(ValueLeakFilter())
+
+    # Validate the prompt style before anything expensive happens. It is a
+    # free-text setting, so a typo ("transcibe") otherwise survives a
+    # multi-minute model load and surfaces as a 500 on the first card.
+    _field_prompt(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

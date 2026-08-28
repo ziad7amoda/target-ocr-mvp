@@ -92,3 +92,16 @@ def test_extract_logs_status_counts():
     client = _client([payload, payload, "{}"])
     r = client.post("/api/extract", files=_upload())
     assert r.status_code == 200
+
+
+def test_an_invalid_prompt_style_fails_at_startup_not_on_the_first_card():
+    """PROMPT_STYLE is free text typed into a Colab form field. A typo used
+    to survive a multi-minute model load and surface as a 500 on the first
+    real card, which is the worst possible moment to discover it."""
+    import pytest
+
+    from app.config import Settings
+    from app.main import create_app
+
+    with pytest.raises(ValueError, match="PROMPT_STYLE"):
+        create_app(settings=Settings(PROMPT_STYLE="transcibe"))

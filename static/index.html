@@ -614,6 +614,13 @@ function renderResults(res){
   el("mFields").textContent = `${found}/${entries.length}`;
   el("mTime").textContent   = (res.elapsed_ms/1000).toFixed(1) + "s";
   el("rawText").textContent = res.raw_text || "—";
+  // Name the prompt alongside the model. The prompt style has changed
+  // results more than the model choice has, so a result that does not
+  // say which one produced it cannot be compared against another run.
+  if (res.prompt_style){
+    el("engineBadge").textContent =
+      `${res.model.split("/").pop()} · ${res.prompt_style} prompt`;
+  }
   el("fieldCount").textContent = `${found} found`;
 
   for (const [name, f] of entries){

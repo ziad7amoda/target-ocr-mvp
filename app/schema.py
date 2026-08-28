@@ -85,6 +85,13 @@ class ExtractResponse(BaseModel):
     agreement: Agreement
     elapsed_ms: int
     model: str
+    # Which PROMPT_STYLE produced this result. The response already named
+    # the model but not the prompt, and the prompt has turned out to change
+    # the outcome more than the model does - a run where Qari returned null
+    # for both Arabic fields and a run where it read them correctly are
+    # indistinguishable in this payload without it. Every result should say
+    # what produced it.
+    prompt_style: str | None = None
 
 
 class HealthResponse(BaseModel):
