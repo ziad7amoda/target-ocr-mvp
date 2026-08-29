@@ -166,3 +166,19 @@ def test_generation_is_reproducible_from_a_seed():
     a, _ = _content(seed=99, tries=3)
     b, _ = _content(seed=99, tries=3)
     assert a == b
+
+
+def test_expiry_is_a_card_lifetime_not_a_human_one():
+    """Expiry follows the issue date, not the holder's birth.
+
+    Deriving it from age produced a card issued to a 2007 birth expiring in
+    2076. Every validator passed it - expiry does follow birth - and the
+    corpus would have taught the model a distribution no card has.
+    """
+    rng = random.Random(21)
+    for _ in range(200):
+        content, _ = generate_content(rng)
+        birth_year = int(content.date_of_birth[:4])
+        expiry_year = int(content.expiry_date[:4])
+        assert expiry_year > birth_year
+        assert 2020 <= expiry_year <= 2036, content.expiry_date

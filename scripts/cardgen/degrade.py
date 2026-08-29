@@ -122,7 +122,7 @@ def glare(img, rng):
 
     arr = np.array(img, dtype=np.float32)
     mask = np.array(layer, dtype=np.float32)[:, :, None] / 255.0
-    lifted = arr + (255 - arr) * mask * rng.uniform(0.45, 0.95)
+    lifted = arr + (255 - arr) * mask * rng.uniform(0.35, 0.85)
     return Image.fromarray(np.clip(lifted, 0, 255).astype(np.uint8))
 
 
@@ -137,9 +137,15 @@ def lighting(img, rng):
 
     arr = np.array(img, dtype=np.float32)
     arr *= 1.0 + (ramp[:, :, None] - 0.5) * rng.uniform(0.10, 0.45)
+    # White balance moves along the blue-orange temperature axis, with a
+    # small green-magenta tint. Scaling the three channels independently
+    # instead - the first version here - shifted a pale blue card to green
+    # or pink, which teaches a colour prior no card has. The card is a cool
+    # near-neutral and must stay recognisably in that family.
+    temperature = rng.uniform(-0.06, 0.06)   # positive warm, negative cool
+    tint = rng.uniform(-0.02, 0.02)
     cast = np.array(
-        [rng.uniform(0.90, 1.10), rng.uniform(0.93, 1.07), rng.uniform(0.88, 1.12)],
-        dtype=np.float32,
+        [1 + temperature, 1 + tint, 1 - temperature], dtype=np.float32
     )
     arr *= cast[None, None, :]
     arr *= rng.uniform(0.72, 1.12)

@@ -138,8 +138,12 @@ def generate(rng: random.Random) -> tuple[CardContent, dict]:
     card_type = "citizen" if citizen else "resident"
 
     dob_iso, dob_printed = _date(rng, 1945, 2007)
-    expiry_year = int(dob_iso[:4]) + rng.randint(20, 70)
-    exp_iso, exp_printed = _date(rng, max(2024, expiry_year), max(2035, expiry_year + 5))
+    # Expiry follows the ISSUE date, not the date of birth. Deriving it from
+    # the holder's age produced cards issued to a 2007 birth that expired in
+    # 2076 - a validator would pass it, since expiry does follow birth, and
+    # the model would learn a distribution no card has. Omani cards run five
+    # to ten years, and a corpus contains recently expired ones too.
+    exp_iso, exp_printed = _date(rng, 2022, 2035)
 
     content = CardContent(
         card_type=card_type,
