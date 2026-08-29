@@ -1,0 +1,12 @@
+# Synthetic card generator (scripts/cardgen) only. Not imported by app/ and
+# not needed to run or deploy the service.
+#
+# Pillow on Windows ships without raqm, so it has no complex-text layout:
+# Arabic renders unjoined and in reverse order. These two do the shaping and
+# bidi reordering before Pillow draws anything.
+arabic-reshaper>=3.0
+python-bidi>=0.6
+# Reads a font's cmap to check it covers the Arabic Presentation Forms the
+# reshaper emits. Without this check, a font that lacks them (Simplified
+# Arabic, Arabic Typesetting) draws empty boxes silently.
+fonttools>=4.50

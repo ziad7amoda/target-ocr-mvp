@@ -9,3 +9,9 @@ eval/fonts/
 eval/samples/*.jpg
 eval/samples/*.png
 .ipynb_checkpoints/
+
+# Generated card corpora. Large, regenerable from a seed, and kept out of
+# the repo so a synthetic set can never be committed alongside - or mistaken
+# for - real card images.
+data/synthetic/
+data/real/
