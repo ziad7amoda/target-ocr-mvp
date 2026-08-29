@@ -92,6 +92,11 @@ class ExtractResponse(BaseModel):
     # indistinguishable in this payload without it. Every result should say
     # what produced it.
     prompt_style: str | None = None
+    # The vision-token budget the processor downscaled the card to. Same
+    # reasoning as prompt_style: it changes the result, so a result that
+    # does not record it cannot be compared against another run. Raising
+    # it from 1280 to 2560 on a real card changed which fields were read.
+    vision_tokens: int | None = None
 
 
 class HealthResponse(BaseModel):

@@ -151,3 +151,56 @@ def test_single_component_name_is_flagged_as_truncated():
     card = CardFields(**{**GOOD, "full_name_ar": "زياد"})
     fields, _ = merge_passes(card, card)
     assert fields["full_name"].status == "review"
+
+
+# --- disagreement where only one pass read anything ------------------------
+# Observed on a real resident card: place_of_birth came back `review`,
+# "passes disagreed", with value and value_ar both null. The card plainly
+# prints جمهورية مصر العربية and the consistency pass had read it - the
+# result told a reviewer that two readings disagreed and then showed them
+# nothing to review, because the reading that succeeded was discarded in
+# favour of the one that failed.
+
+
+def test_a_disagreement_shows_the_pass_that_actually_read_something():
+    a = CardFields(place_of_birth_ar=None)
+    b = CardFields(place_of_birth_ar="جمهورية مصر العربية")
+    fields, _ = merge_passes(a, b)
+    assert fields["place_of_birth"].value_ar == "جمهورية مصر العربية"
+    assert fields["place_of_birth"].status == "review"
+
+
+def test_it_works_in_either_direction():
+    """Nothing privileges the primary pass here - whichever one read the
+    value is the one worth showing."""
+    a = CardFields(place_of_birth_ar="جمهورية مصر العربية")
+    b = CardFields(place_of_birth_ar=None)
+    fields, _ = merge_passes(a, b)
+    assert fields["place_of_birth"].value_ar == "جمهورية مصر العربية"
+
+
+def test_a_one_sided_read_says_so_rather_than_claiming_disagreement():
+    """"Passes disagreed" describes two different readings. One reading and
+    one blank is a weaker thing and a reviewer should be told which it is."""
+    fields, _ = merge_passes(CardFields(id_number=None), CardFields(id_number="70011864"))
+    assert "one" in fields["id_number"].reason
+
+
+def test_two_real_but_different_readings_still_prefer_the_primary():
+    """The existing contract for a genuine disagreement is unchanged."""
+    a = CardFields(id_number="70011864")
+    b = CardFields(id_number="70011865")
+    fields, _ = merge_passes(a, b)
+    assert fields["id_number"].value == "70011864"
+    assert fields["id_number"].reason == "passes disagreed"
+
+
+def test_a_review_never_carries_an_empty_value():
+    """The invariant the bug broke: `review` means a human should look at
+    something, so there has to be something to look at. Null in both passes
+    is `missing`, which is a different status with a different meaning."""
+    for a_val, b_val in (("X", None), (None, "X"), ("X", "Y")):
+        fields, _ = merge_passes(CardFields(id_number=a_val), CardFields(id_number=b_val))
+        result = fields["id_number"]
+        if result.status == "review":
+            assert result.value is not None or result.value_ar is not None

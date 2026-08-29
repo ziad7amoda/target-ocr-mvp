@@ -251,8 +251,34 @@ def merge_passes(
         )
 
         if not agrees:
+            # Show whichever pass actually read something. The primary wins
+            # when both did - a genuine disagreement is unchanged - but when
+            # the primary read nothing and the consistency pass did, showing
+            # the primary means telling a reviewer that two readings
+            # disagreed and then showing them nothing to review. Observed on
+            # a real resident card: place_of_birth came back `review` with a
+            # null value while the card plainly printed جمهورية مصر العربية
+            # and pass B had read it. The reading that succeeded was
+            # discarded in favour of the one that failed.
+            #
+            # `review` means a human should look at something, so there has
+            # to be something to look at; null in both passes is `missing`,
+            # which is a different status with a different meaning.
+            one_sided = value is None and value_ar is None
+            if one_sided:
+                value, value_ar = sec_value, sec_value_ar
             results[field] = FieldResult(
-                value=value, value_ar=value_ar, status="review", reason="passes disagreed"
+                value=value,
+                value_ar=value_ar,
+                status="review",
+                reason=(
+                    # "Passes disagreed" describes two different readings.
+                    # One reading and one blank is a weaker claim, and which
+                    # of the two it is changes what a reviewer should do.
+                    "only one of the two readings produced a value"
+                    if one_sided or (sec_value is None and sec_value_ar is None)
+                    else "passes disagreed"
+                ),
             )
             continue
 

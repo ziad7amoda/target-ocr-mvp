@@ -618,8 +618,9 @@ function renderResults(res){
   // results more than the model choice has, so a result that does not
   // say which one produced it cannot be compared against another run.
   if (res.prompt_style){
+    const tokens = res.vision_tokens ? ` · ${res.vision_tokens} vision tokens` : "";
     el("engineBadge").textContent =
-      `${res.model.split("/").pop()} · ${res.prompt_style} prompt`;
+      `${res.model.split("/").pop()} · ${res.prompt_style} prompt${tokens}`;
   }
   el("fieldCount").textContent = `${found} found`;
 

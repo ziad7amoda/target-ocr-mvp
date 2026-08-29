@@ -459,3 +459,26 @@ def test_a_failed_transcription_leaves_the_extraction_intact():
     res = extract(_img(), FakeEngine(_engine), Settings())
     assert res.fields["id_number"].value == "70011864"
     assert res.fields["full_name"].status == "missing"
+
+
+def test_response_records_the_vision_token_budget():
+    """Same reasoning as prompt_style: it changes the result, so a result
+    that does not record it cannot be compared against another run."""
+    engine = FakeEngine(_replies())
+    res = extract(_img(), engine, Settings(MAX_PIXELS=2560 * 28 * 28))
+    assert res.vision_tokens == 2560
+
+
+def test_a_failed_recovery_says_it_was_attempted():
+    """A `missing` field with no reason is indistinguishable from one where
+    recovery never ran, and those point at different fixes."""
+    reply = json.dumps(NO_ARABIC)
+    res = extract(_img(), FakeEngine([reply, reply, "nothing useful here"]), Settings())
+    assert res.fields["full_name"].status == "missing"
+    assert "recovery found nothing" in res.fields["full_name"].reason
+
+
+def test_a_successful_recovery_does_not_claim_it_failed():
+    reply = json.dumps(NO_ARABIC)
+    res = extract(_img(), FakeEngine([reply, reply, TRANSCRIPT]), Settings())
+    assert "found nothing" not in (res.fields["full_name"].reason or "")
