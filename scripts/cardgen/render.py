@@ -14,12 +14,20 @@ from PIL import Image, ImageDraw, ImageFont
 from scripts.cardgen.content import CardContent
 from scripts.cardgen.fonts import find_arabic_fonts
 from scripts.cardgen.layout import (
-    GHOST_BOX,
+    CARD_H,
+    CARD_W,
+    COLOURS,
+    GHOST_CENTRE,
+    GHOST_RADIUS,
     LAYOUT,
     PORTRAIT_BOX,
+    SERIAL_SIZE,
+    SERIAL_TOP,
+    SERIAL_X,
     background,
     box_px,
     px,
+    round_corners,
 )
 from scripts.cardgen.text import prepare
 
@@ -44,9 +52,6 @@ LATIN_BOLD = [
     r"C:\Windows\Fonts\segoeuib.ttf",
 ]
 
-INK = (26, 32, 46)
-INK_LABEL = (44, 54, 74)
-
 
 class FontUnavailable(RuntimeError):
     """No font on this machine can draw shaped Arabic."""
@@ -65,49 +70,95 @@ def available_arabic_fonts() -> list[str]:
     return fonts
 
 
-def _load(path: str, size: int) -> ImageFont.FreeTypeFont:
-    return ImageFont.truetype(path, size)
+def _portrait(draw: ImageDraw.ImageDraw, rng: random.Random) -> None:
+    """A flat block where the photograph belongs.
 
-
-def _placeholder(draw: ImageDraw.ImageDraw, box, rng, label: str) -> None:
-    """A flat block where a photograph belongs.
-
-    Never a real face, and never a generated one either: the model has no
-    use for it, and a synthetic corpus of identity documents should not
-    contain portraits at all.
+    Never a real face, and never a generated one: the model has no use for
+    it, and a synthetic corpus of identity documents should not contain
+    portraits at all.
     """
-    x0, y0, x1, y1 = box_px(box)
+    x0, y0, x1, y1 = box_px(PORTRAIT_BOX)
     shade = rng.randint(150, 185)
-    draw.rectangle([x0, y0, x1, y1], fill=(shade, shade + 6, shade + 10))
-    draw.rectangle([x0, y0, x1, y1], outline=(shade - 40, shade - 34, shade - 30), width=2)
+    draw.rectangle([x0, y0, x1, y1], fill=(shade, shade + 6, shade + 12))
+    draw.rectangle(
+        [x0, y0, x1, y1], outline=(shade - 42, shade - 36, shade - 30), width=2
+    )
     draw.text(
         ((x0 + x1) // 2, (y0 + y1) // 2),
-        label,
-        fill=(shade - 55, shade - 50, shade - 45),
+        "PHOTO",
+        fill=(shade - 58, shade - 52, shade - 46),
         anchor="mm",
-        font=ImageFont.truetype(LATIN_FONTS[0], max(10, (x1 - x0) // 9)),
+        font=ImageFont.truetype(LATIN_FONTS[0], max(10, (x1 - x0) // 7)),
     )
+
+
+def _ghost(draw: ImageDraw.ImageDraw, rng: random.Random) -> None:
+    """The scalloped secondary portrait, drawn as a plain polygon.
+
+    Shape only. The real card's rosette is part of its security design and
+    is not reproduced; what the model needs is that a text-free scalloped
+    region sits here and things must be read around it.
+    """
+    import math
+
+    cx, cy = GHOST_CENTRE[0] * CARD_W, GHOST_CENTRE[1] * CARD_H
+    rx, ry = GHOST_RADIUS[0] * CARD_W, GHOST_RADIUS[1] * CARD_H
+    points = []
+    lobes = rng.choice([9, 10, 11, 12])
+    for i in range(lobes * 12):
+        t = (i / (lobes * 12)) * 2 * math.pi
+        scale = 1.0 + 0.12 * math.cos(t * lobes)
+        points.append((cx + math.cos(t) * rx * scale, cy + math.sin(t) * ry * scale))
+    shade = rng.randint(158, 186)
+    draw.polygon(points, fill=(shade, shade + 5, shade + 11))
+
+
+def _serial(card: Image.Image, serial: str, rng: random.Random) -> None:
+    """The serial runs vertically up the left of the card face.
+
+    Drawn into its own layer and rotated, because Pillow has no vertical
+    text without raqm - the same missing feature that forces the Arabic
+    shaping in scripts/cardgen/text.
+    """
+    size = int(SERIAL_SIZE * CARD_H)
+    font = ImageFont.truetype(LATIN_FONTS[0], size)
+    strip = Image.new("RGBA", (int(CARD_H * 0.60), size + 8), (0, 0, 0, 0))
+    ImageDraw.Draw(strip).text((0, 0), serial, font=font, fill=(52, 58, 84, 240))
+    strip = strip.rotate(90, expand=True)
+    card.paste(strip, (int(SERIAL_X * CARD_W), int(SERIAL_TOP * CARD_H)), strip)
+
+
+def _signature(draw: ImageDraw.ImageDraw, rng: random.Random) -> None:
+    """A scribble above the SIGNATURE label."""
+    x = int(0.075 * CARD_W)
+    y = int(0.630 * CARD_H)
+    points = [(x, y)]
+    for _ in range(rng.randint(5, 9)):
+        x += rng.randint(14, 34)
+        points.append((x, y + rng.randint(-18, 18)))
+    draw.line(points, fill=(38, 42, 68), width=rng.randint(2, 4), joint="curve")
 
 
 def render(content: CardContent, printed_dates: dict, rng: random.Random) -> Image.Image:
     """Compose one clean card. Degradation happens afterwards."""
-    arabic_fonts = available_arabic_fonts()
-    arabic_font = rng.choice(arabic_fonts)
+    arabic_font = rng.choice(available_arabic_fonts())
     latin_font = rng.choice(LATIN_FONTS)
     latin_bold = rng.choice(LATIN_BOLD)
 
     card = background(rng)
     draw = ImageDraw.Draw(card)
-
-    _placeholder(draw, PORTRAIT_BOX, rng, "PHOTO")
-    _placeholder(draw, GHOST_BOX, rng, "")
+    _portrait(draw, rng)
+    _ghost(draw, rng)
 
     citizen = content.card_type == "citizen"
     values = {
         "header_ar": "سلطنة عمان",
         "header_en": "SULTANATE OF OMAN",
-        "type_en": "IDENTITY CARD" if citizen else "RESIDENT CARD",
-        "type_ar": "البطاقة الشخصية" if citizen else "بطاقة مقيم",
+        # Both card types print their name over two lines.
+        "type_en_1": "IDENTITY" if citizen else "RESIDENT",
+        "type_en_2": "CARD",
+        "type_ar_1": "البطاقة" if citizen else "بطاقة",
+        "type_ar_2": "الشخصية" if citizen else "مقيم",
         "label_civil_en": "CIVIL NUMBER",
         "label_expiry_en": "EXPIRY DATE",
         "label_dob_en": "DATE OF BIRTH",
@@ -122,6 +173,7 @@ def render(content: CardContent, printed_dates: dict, rng: random.Random) -> Ima
         "label_name_ar": "الإسم",
         "value_name_ar": content.full_name_ar,
         "label_sig_en": "SIGNATURE",
+        "label_sig_ar": "التوقيع",
     }
     # المهنة is printed on resident cards only. It matters even though it is
     # never extracted: it is the row below the name, and it is what closes
@@ -134,44 +186,15 @@ def render(content: CardContent, printed_dates: dict, rng: random.Random) -> Ima
         field = LAYOUT[key]
         x, y, size = px(field)
         if field.script == "arabic":
-            font = _load(arabic_font, size)
+            font = ImageFont.truetype(arabic_font, size)
         else:
-            font = _load(latin_bold if field.weight == "bold" else latin_font, size)
-
-        colour = INK if key.startswith("value") or key.startswith("type") else INK_LABEL
-        draw.text((x, y), prepare(text), font=font, fill=colour, anchor=field.anchor)
+            font = ImageFont.truetype(
+                latin_bold if field.weight == "bold" else latin_font, size
+            )
+        draw.text(
+            (x, y), prepare(text), font=font, fill=COLOURS[field.colour], anchor=field.anchor
+        )
 
     _serial(card, content.serial, rng)
     _signature(draw, rng)
-    return card
-
-
-def _serial(card: Image.Image, serial: str, rng: random.Random) -> None:
-    """The serial runs vertically up the left of the card face.
-
-    Drawn into its own transparent layer and rotated, because Pillow has no
-    vertical text without raqm - the same missing feature that forces the
-    Arabic shaping in scripts/cardgen/text.
-    """
-    from scripts.cardgen.layout import CARD_H, CARD_W, SERIAL_SIZE, SERIAL_TOP, SERIAL_X
-
-    size = int(SERIAL_SIZE * CARD_H)
-    font = ImageFont.truetype(LATIN_FONTS[0], size)
-    strip = Image.new("RGBA", (int(CARD_H * 0.55), size + 8), (0, 0, 0, 0))
-    ImageDraw.Draw(strip).text((0, 0), serial, font=font, fill=(60, 66, 88, 235))
-    strip = strip.rotate(90, expand=True)
-    card.paste(strip, (int(SERIAL_X * CARD_W), int(SERIAL_TOP * CARD_H)), strip)
-
-
-def _signature(draw: ImageDraw.ImageDraw, rng: random.Random) -> None:
-    """A scribble where a signature goes. Pure decoration for the model, but
-    its absence would leave an obviously empty region the real card fills."""
-    from scripts.cardgen.layout import CARD_H, CARD_W
-
-    x = int(0.045 * CARD_W)
-    y = int(0.800 * CARD_H)
-    points = [(x, y)]
-    for _ in range(rng.randint(5, 9)):
-        x += rng.randint(12, 30)
-        points.append((x, y + rng.randint(-16, 16)))
-    draw.line(points, fill=(40, 44, 70), width=rng.randint(2, 3), joint="curve")
+    return round_corners(card)
